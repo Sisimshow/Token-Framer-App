@@ -251,7 +251,7 @@ function buildControl(c, ctl) {
     ctl.append(el('span', 'hint', c.text));
     c.sync = () => {};
   } else if (c.t === 'autocenter') {
-    // [Pick center point] [x Auto center]: the button stays available even when detection failed (the checkbox only shows once a hole is found)
+    // [x Auto center] [Pick center point]: the button stays available even when detection failed (the checkbox only shows once a hole is found)
     const pick = el('button', null, 'Pick center point');
     pick.title = 'Click the middle of the frame in the preview so Auto center can find it';
     pick.addEventListener('click', toggleSeedPick);
@@ -259,7 +259,7 @@ function buildControl(c, ctl) {
     const b = el('input'); b.type = 'checkbox';
     b.addEventListener('change', () => set(c.k, b.checked));
     wrap.append(b, ' Auto center');
-    ctl.append(pick, wrap);
+    ctl.append(wrap, pick);
     c.sync = (cfg) => { b.checked = !!cfg[c.k]; wrap.style.display = holeValid() ? '' : 'none'; pick.classList.toggle('active', state.pickSeed); };
   } else if (c.t === 'aitool') {
     ctl.classList.add('wrap');

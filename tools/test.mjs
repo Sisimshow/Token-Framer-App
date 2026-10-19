@@ -235,7 +235,7 @@ async function main() {
   const bar = await app.ev(`[...document.querySelectorAll('#toolbar > *')].map((e) => (e.textContent || e.className).trim()).filter(Boolean).join('|')`);
   check('toolbar: labels and buttons in the requested order', bar.startsWith('Image|Open Images…|Open Folder…|sep|Frame|Open Frame…|Recent Frames'), bar);
   const seedBtn = await app.ev(`(() => { const kids = [...document.querySelectorAll('#panel .row')[0].querySelectorAll('.ctl > *')].map((e) => e.textContent.trim()); return { first: kids[0], second: kids[1], inToolbar: !!document.querySelector('#toolbar #btnSeed, #toolbar #btnDefaultFrame') }; })()`);
-  check('Pick center point sits left of Auto center in the panel; no Default button in the toolbar', seedBtn.first === 'Pick center point' && seedBtn.second === 'Auto center' && !seedBtn.inToolbar, J(seedBtn));
+  check('Pick center point sits right of Auto center in the panel; no Default button in the toolbar', seedBtn.first === 'Auto center' && seedBtn.second === 'Pick center point' && !seedBtn.inToolbar, J(seedBtn));
 
   // -- colour controls: no extra eyedropper button, hex field drives the colour
   const hexT = await app.ev(`(() => {
