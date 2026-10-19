@@ -117,23 +117,27 @@ const SECTIONS = [
   ] },
   { title: 'Background removal', controls: [
     { k: 'crPopOutOnly', t: 'check', label: 'Pop-out layer only' },
+    { k: 'showCutout', t: 'check', label: 'Show cutout only', scope: 'ui' },
     { t: 'hint', show: (c) => hasCutout(c) && c.crPopOutOnly && !c.popOutEnabled, text: 'The cutout only shows on the pop-out layer. Enable Pop-out, or untick "Pop-out layer only".' },
+    { t: 'subhead', label: 'AI cutout', note: 'one click, best for most art' },
+    { t: 'aitool', label: '' },
+    num('aiSensitivity', 'Sensitivity', 0, 1, 0.01, (c) => hasAi(c)),
+    num('aiBlur', 'Mask blur', 0, 64, 1, (c) => hasAi(c)),
+    num('aiOffset', 'Mask offset', -64, 64, 1, (c) => hasAi(c)),
+    { t: 'subhead', label: 'By color', note: 'flat backgrounds' },
     { k: 'crEnabled', k2: 'crColor', t: 'tint', label: 'Remove color' },
-    num('crThreshold', 'Threshold', 0, 100, 1),
-    { k: 'crEdgesOnly', t: 'check', label: 'Edges only' },
-    num('crFeather', 'Feather', 0, 10, 1),
-    num('crGrow', 'Grow', 0, 10, 1),
-    num('crDefringe', 'Defringe', 0, 100, 1),
-    { t: 'aitool', label: 'AI cutout' },
-    num('aiSensitivity', 'AI sensitivity', 0, 1, 0.01, (c) => hasAi(c)),
-    num('aiBlur', 'AI mask blur', 0, 64, 1, (c) => hasAi(c)),
-    num('aiOffset', 'AI mask offset', -64, 64, 1, (c) => hasAi(c)),
-    { t: 'cutouttools', label: 'Manual tools' },
-    num('wandTolerance', 'Wand tolerance', 0, 100, 1),
-    { k: 'wandContiguous', t: 'check', label: 'Wand contiguous' },
-    num('brushSize', 'Brush (image px)', 1, 600, 1),
-    { k: 'brushMode', t: 'select', label: 'Brush mode', opts: [['erase', 'Erase'], ['restore', 'Restore']] },
-    { k: 'showCutout', t: 'check', label: 'Show cutout only', scope: 'ui' }
+    num('crThreshold', 'Threshold', 0, 100, 1, (c) => c.crEnabled),
+    { k: 'crEdgesOnly', t: 'check', label: 'Edges only', show: (c) => c.crEnabled },
+    { t: 'subhead', label: 'Edge cleanup', note: 'applies to the cutout above and to wand edits', show: (c) => hasCutout(c) },
+    num('crFeather', 'Feather', 0, 10, 1, (c) => hasCutout(c)),
+    num('crGrow', 'Grow', 0, 10, 1, (c) => hasCutout(c)),
+    num('crDefringe', 'Defringe', 0, 100, 1, (c) => hasCutout(c)),
+    { t: 'subhead', label: 'Touch up by hand' },
+    { t: 'cutouttools', label: '' },
+    num('wandTolerance', 'Wand tolerance', 0, 100, 1, () => state.tool === 'wand'),
+    { k: 'wandContiguous', t: 'check', label: 'Wand contiguous', show: () => state.tool === 'wand' },
+    num('brushSize', 'Brush (image px)', 1, 600, 1, () => state.tool === 'brush'),
+    { k: 'brushMode', t: 'select', label: 'Brush mode', opts: [['erase', 'Erase'], ['restore', 'Restore']], show: () => state.tool === 'brush' }
   ] },
   { title: 'Output', scope: 'out', controls: [
     { k: 'size', t: 'num', label: 'Size (px)', min: 128, max: 4096 },
@@ -162,7 +166,17 @@ function buildPanel() {
     const body = el('div', 'sec');
     for (const c of sec.controls) {
       if (sec.scope && !c.scope) c.scope = sec.scope;
-      const row = el('div', 'row');
+      if (c.t === 'subhead') { // heading inside a section, no control
+        const h = el('div', 'row subhead');
+        h.append(el('span', null, c.label));
+        if (c.note) h.append(el('span', 'hint', c.note));
+        c.row = h;
+        c.sync = () => {};
+        ctls.push(c);
+        body.append(h);
+        continue;
+      }
+      const row = el('div', c.label ? 'row' : 'row full'); // no label: the control spans the whole row
       row.append(el('label', null, c.label || ''));
       const ctl = el('div', 'ctl');
       row.append(ctl);

@@ -233,7 +233,7 @@ async function main() {
 
   // -- colour controls: no extra eyedropper button, hex field drives the colour
   const hexT = await app.ev(`(() => {
-    const row = [...document.querySelectorAll('#panel .row')].find((r) => r.querySelector('label').textContent === 'Remove color');
+    const row = [...document.querySelectorAll('#panel .row')].find((r) => r.querySelector('label')?.textContent === 'Remove color');
     const hex = row.querySelector('input[type=text]');
     hex.value = 'FF8800'; hex.dispatchEvent(new Event('input', { bubbles: true }));
     return { buttons: row.querySelectorAll('button').length, color: __tf.shared.crColor, swatch: row.querySelector('input[type=color]').value };
