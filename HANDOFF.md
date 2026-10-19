@@ -38,6 +38,10 @@ author's SwarmUI RMBG workflow and the maths in `renderer/lib/matte.js` matches 
   runs the real model (it would need the 490 MB file).
 - Not done: soft (partial) alpha (the matte is thresholded at 50 %, then the usual feather/grow apply), refine_foreground, "AI remove all" for a whole folder.
 
+## Recent frames sidebar
+Toolbar "Recent" opens a left sidebar of recently used frames (max 24, newest first, thumbnails, open/closed state remembered). Clicking a
+frame restores the frame image only, not per-frame settings (deliberate choice). Missing files show as "(missing)" and drop out on click.
+
 ## Known limits and rough edges
 - Per-image overrides and manual edits are saved to `edits.json` in userData, keyed by source path (popEdits are dropped if the image size changed). Undo history is not saved, and an edit made under 0.5 s before closing the window can be lost.
 - A non-square frame is stretched to a square (same as the module and as the old Python script's final resize).

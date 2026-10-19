@@ -311,6 +311,46 @@ async function main() {
   check('ai edit removes outside the matte and keeps the subject', ai.corners[0] === 0 && ai.corners[1] === 0 && ai.centre === 255, J(ai));
   check('ai edit without a matte is a no-op (model not run yet)', ai.noMatte === 255, J(ai.noMatte));
 
+  // -- recent frames sidebar
+  const fA = path.join(work, 'Frame A.webp'), fB = path.join(work, 'Frame B ’b’.webp'), fC = path.join(work, 'Frame C.webp');
+  for (const f of [fA, fB, fC]) fs.copyFileSync(frameFile, f);
+  await app.ev(`(__tf.recentFrames = [], 1)`);
+  for (const f of [fA, fB, fA, fA.toUpperCase()]) await app.ev(`__tf.loadFrame(${J(f)})`);
+  const rec = await app.ev('__tf.recentFrames');
+  check('recent frames: most recent first, no duplicates (case-insensitive)', rec.length === 2 && rec[0].toLowerCase() === fA.toLowerCase() && rec[1] === fB, J(rec));
+
+  await app.ev(`document.querySelector('#btnFrames').click()`);
+  await sleep(600);
+  const ui1 = await app.ev(`(() => { const t = [...document.querySelectorAll('#frameList .ftile')];
+    const painted = t.map((x) => { const c = x.querySelector('canvas'); const d = c.getContext('2d').getImageData(0, 0, 192, 192).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return true; return false; });
+    return { shown: !document.querySelector('#frames').hidden, tiles: t.length, painted, cur: t.filter((x) => x.classList.contains('cur')).length }; })()`);
+  check('sidebar opens with one painted tile per recent frame, current one highlighted', ui1.shown && ui1.tiles === 2 && ui1.painted.every(Boolean) && ui1.cur === 1, J(ui1));
+
+  const before = await app.ev('JSON.stringify(__tf.shared)');
+  await app.ev(`document.querySelectorAll('#frameList .ftile')[1].click()`);
+  await sleep(500);
+  const click = await app.ev('({ name: __tf.frame.name, order: __tf.recentFrames, shared: JSON.stringify(__tf.shared) })');
+  check('clicking a tile loads that frame, keeps list order, leaves settings alone', click.name === 'Frame B ’b’' && click.order[1] === fB && click.shared === before, J({ name: click.name, order: click.order }));
+
+  const gone = path.join(work, 'Gone.webp');
+  await app.ev(`(__tf.recentFrames.push(${J(gone)}), __tf.renderFrameList(), 1)`);
+  await sleep(500);
+  const miss = await app.ev(`(() => { const t = [...document.querySelectorAll('#frameList .ftile')].find((x) => x.classList.contains('missing')); const had = !!t; t?.click(); return { had, left: __tf.recentFrames.length }; })()`);
+  check('a missing frame file shows as missing and is dropped on click', miss.had && miss.left === 2, J(miss));
+
+  await app.ev(`(() => { for (let i = 0; i < 30; i++) __tf.rememberFrame('C:/nowhere/f' + i + '.webp'); return 1; })()`);
+  check('recent list is capped at 24', (await app.ev('__tf.recentFrames.length')) === 24);
+
+  // persists across a restart: put two real frames back on top, then relaunch
+  await app.ev(`(__tf.recentFrames = [${J(fC)}, ${J(fB)}, ${J(fA)}], 1)`);
+  await app.ev(`__tf.loadFrame(${J(fB)}, { keepOrder: true })`);
+  await sleep(900);
+  app.close();
+  await sleep(800);
+  await app.launch();
+  const again = await app.ev(`({ rec: __tf.recentFrames, open: !document.querySelector('#frames').hidden, frame: __tf.frame.name })`);
+  check('recent frames and sidebar state survive a restart', J(again.rec) === J([fC, fB, fA]) && again.open && again.frame === 'Frame B ’b’', J(again));
+
   app.close();
 }
 

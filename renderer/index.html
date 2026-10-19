@@ -9,11 +9,16 @@
 </head>
 <body>
   <div id="app">
+    <aside id="frames" hidden>
+      <div class="fhead"><strong>Recent frames</strong><button id="btnFrameBrowse" title="Browse for a frame image">Browse…</button></div>
+      <div id="frameList"></div>
+    </aside>
     <section id="left">
       <div id="toolbar">
         <button id="btnImages" title="Pick one or more images">Open Images…</button>
         <button id="btnFolder" title="Pick a folder; every image without Token/Frame in its name is listed">Open Folder…</button>
         <span class="sep"></span>
+        <button id="btnFrames" title="Show or hide the list of recently used frames">Recent</button>
         <button id="btnFrame">Frame…</button>
         <button id="btnDefaultFrame" title="Go back to the built-in default frame">Default</button>
         <span id="frameName" class="muted">no frame</span>

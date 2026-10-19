@@ -8,6 +8,7 @@ const api = window.api;
 const $ = (s, r = document) => r.querySelector(s);
 const PREVIEW = 800;
 const IMG_EXT = /\.(webp|png|jpe?g|bmp|gif|tiff?|avif)$/i;
+const RECENT_MAX = 24;
 const OUT_DEFAULTS = { size: 1000, quality: 0.95, overwrite: false };
 
 const state = {
@@ -16,6 +17,7 @@ const state = {
   ui: { popOutPreview: false, showCutout: false },
   editsStore: {},       // path key -> {override, w, h}, mirrors edits.json
   frame: null,          // {path, name, bitmap, hole, holeCache}
+  recentFrames: [],     // frame image paths, most recently used first (max RECENT_MAX)
   items: [], cur: -1, skipped: 0, editOnly: false, gen: 0,
   assets: new Map(),    // path -> ImageBitmap | null
   base: null,           // {path, bitmap} for the previewed item
@@ -39,7 +41,7 @@ let persistTimer = 0;
 function persist() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
-    api.setSettings({ shared: state.shared, out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '' });
+    api.setSettings({ shared: state.shared, out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen });
   }, 500);
 }
 
@@ -750,7 +752,75 @@ function showHoleStatus() {
   else n.textContent = 'The frame\'s middle runs out to its outer edge (the frame is not closed). Use "Pick center point", or pick a preset mask shape.';
 }
 
-async function loadFrame(p) {
+// ---------------------------------------------------------------- recent frames sidebar
+const sameFile = (a, b) => a.toLowerCase() === b.toLowerCase();
+const frameThumbs = new Map(); // lower-case path -> canvas | 'missing' (memory only)
+
+/** Put a frame at the top of the recent list (or, with keepOrder, only make sure it is in it). */
+function rememberFrame(p, keepOrder = false) {
+  const has = state.recentFrames.some((x) => sameFile(x, p));
+  if (keepOrder && has) return;
+  state.recentFrames = [p, ...state.recentFrames.filter((x) => !sameFile(x, p))].slice(0, RECENT_MAX);
+}
+
+function forgetFrame(p) {
+  state.recentFrames = state.recentFrames.filter((x) => !sameFile(x, p));
+  frameThumbs.delete(p.toLowerCase());
+  renderFrameList();
+  persist();
+}
+
+async function frameThumb(p) {
+  const key = p.toLowerCase();
+  if (frameThumbs.has(key)) return frameThumbs.get(key);
+  let out = 'missing';
+  try {
+    const bm = await bitmapFromPath(p);
+    const c = document.createElement('canvas');
+    c.width = c.height = 192;
+    const s = Math.min(192 / bm.width, 192 / bm.height);
+    c.getContext('2d').drawImage(bm, (192 - bm.width * s) / 2, (192 - bm.height * s) / 2, bm.width * s, bm.height * s);
+    bm.close();
+    out = c;
+  } catch { /* file gone or unreadable */ }
+  frameThumbs.set(key, out);
+  return out;
+}
+
+function renderFrameList() {
+  const list = $('#frameList');
+  if (!state.ui.framesOpen) return;
+  list.innerHTML = '';
+  for (const p of state.recentFrames) {
+    const t = el('div', 'ftile');
+    t.title = p;
+    if (state.frame && sameFile(state.frame.path, p)) t.classList.add('cur');
+    const cv = el('canvas');
+    cv.width = cv.height = 192;
+    const x = el('button', 'x', '✕');
+    x.title = 'Remove from this list';
+    x.addEventListener('click', (e) => { e.stopPropagation(); forgetFrame(p); });
+    t.append(cv, el('div', 'nm', baseOf(p)), x);
+    t.addEventListener('click', async () => {
+      if (t.classList.contains('missing')) { forgetFrame(p); setStatus(`Removed ${baseOf(p)} from the list (file not found).`, true); return; }
+      if (state.frame && sameFile(state.frame.path, p)) return;
+      await loadFrame(p, { keepOrder: true });
+    });
+    list.append(t);
+    frameThumb(p).then((c) => {
+      if (c === 'missing') { t.classList.add('missing'); $('.nm', t).textContent = `${baseOf(p)} (missing)`; }
+      else cv.getContext('2d').drawImage(c, 0, 0);
+    });
+  }
+}
+
+function applyFramesOpen() {
+  $('#frames').hidden = !state.ui.framesOpen;
+  $('#btnFrames').classList.toggle('active', !!state.ui.framesOpen);
+  renderFrameList();
+}
+
+async function loadFrame(p, { keepOrder = false } = {}) {
   try {
     const bitmap = await bitmapFromPath(p);
     state.frame?.bitmap.close?.();
@@ -763,6 +833,8 @@ async function loadFrame(p) {
     showHoleStatus();
     syncControls();
     schedulePreview(0);
+    rememberFrame(p, keepOrder);
+    renderFrameList();
     persist();
     return true;
   } catch (err) {
@@ -1109,6 +1181,8 @@ function setup() {
   $('#btnFolder').onclick = async () => { const d = await api.pickFolder(state.lastDir); if (d) openFolder(d); };
   $('#btnFrame').onclick = async () => { const r = await api.pickImages({ multi: false, defaultPath: state.frame ? dirOf(state.frame.path) : state.lastDir }); if (r[0]) loadFrame(r[0]); };
   $('#btnDefaultFrame').onclick = async () => { if (await loadFrame(await api.defaultFramePath())) setStatus('Using the default frame.'); };
+  $('#btnFrames').onclick = () => { state.ui.framesOpen = !state.ui.framesOpen; applyFramesOpen(); persist(); };
+  $('#btnFrameBrowse').onclick = () => $('#btnFrame').click();
   $('#btnSeed').onclick = () => {
     if (!state.frame) return setStatus('Choose a frame first.', true);
     const on = !state.pickSeed;
@@ -1160,12 +1234,15 @@ async function init() {
   state.shared = { ...DEFAULTS, ...(s.shared || {}) };
   state.out = { ...OUT_DEFAULTS, ...(s.out || {}) };
   state.lastDir = s.lastDir || '';
+  state.recentFrames = (Array.isArray(s.recentFrames) ? s.recentFrames : []).filter((x) => typeof x === 'string').slice(0, RECENT_MAX);
+  state.ui.framesOpen = !!s.framesOpen;
+  applyFramesOpen();
   state.editsStore = await api.getEdits();
   syncControls();
   const def = await api.defaultFramePath();
-  if (s.framePath && (await api.exists(s.framePath))) await loadFrame(s.framePath);
-  else if (await api.exists(def)) await loadFrame(def);
+  if (s.framePath && (await api.exists(s.framePath))) await loadFrame(s.framePath, { keepOrder: true });
+  else if (await api.exists(def)) await loadFrame(def, { keepOrder: true });
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, runAi, computeMatte, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, eff, compositeFor, resolveCfg }); // DevTools / tests
