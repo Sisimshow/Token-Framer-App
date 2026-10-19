@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   pickFolder: (defaultPath) => ipcRenderer.invoke('dlg:folder', defaultPath),
   pickImages: (opts) => ipcRenderer.invoke('dlg:images', opts),
-  pickSave: (defaultPath) => ipcRenderer.invoke('dlg:save', defaultPath),
+  pickSave: (defaultPath, ext) => ipcRenderer.invoke('dlg:save', defaultPath, ext),
   listImages: (dir) => ipcRenderer.invoke('fs:list', dir),
   readFile: (p) => ipcRenderer.invoke('fs:read', p),
   writeFile: (p, bytes) => ipcRenderer.invoke('fs:write', p, bytes),

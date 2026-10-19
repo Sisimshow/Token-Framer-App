@@ -21,6 +21,7 @@ Token Framer Foundry module (MIT); the module is a separate project and is not t
 ## Layout
 - `main.cjs`: window, native dialogs, file IPC (`fs:*`), settings JSON in `userData`. `preload.cjs`: the `window.api` bridge.
   `contextIsolation` is on; add new file or OS access as an IPC handler, not by loosening that.
+- `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).
 - `renderer/app.js`: UI, state, tools, saving. `renderer/lib/composite.js`: layer compositing and placement.
   `renderer/lib/colorremoval.js`: background removal masks. `renderer/lib/holedetect.js`: frame-opening detection.
 - Plain ES modules, no bundler, no framework. The CSP in `index.html` is strict (`script-src 'self'`).

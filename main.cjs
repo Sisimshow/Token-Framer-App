@@ -51,8 +51,8 @@ ipcMain.handle('dlg:images', async (_e, opts = {}) => {
   });
   return r.canceled ? [] : r.filePaths;
 });
-ipcMain.handle('dlg:save', async (_e, defaultPath) => {
-  const r = await dialog.showSaveDialog(win, { defaultPath, filters: [{ name: 'WebP', extensions: ['webp'] }] });
+ipcMain.handle('dlg:save', async (_e, defaultPath, ext = 'webp') => {
+  const r = await dialog.showSaveDialog(win, { defaultPath, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
   return r.canceled ? null : r.filePath;
 });
 

@@ -1,6 +1,7 @@
 import { DEFAULTS, compositeImage, resolvePlacement, baseRect } from './lib/composite.js';
 import { buildEditedMask, applyRemovalMask, stampStroke } from './lib/colorremoval.js';
 import { detectHole, holeMaskCanvas } from './lib/holedetect.js';
+import { makeZip } from './lib/zip.js';
 
 const api = window.api;
 const $ = (s, r = document) => r.querySelector(s);
@@ -48,6 +49,7 @@ let editsTimer = 0;
 function flushEdits() {
   clearTimeout(editsTimer);
   for (const it of state.items) {
+    if (!it.path) continue; // pasted image, nothing to key the edits to
     const k = editKey(it.path);
     if (Object.keys(it.override).length) state.editsStore[k] = { override: it.override, w: it.dims?.w ?? state.editsStore[k]?.w, h: it.dims?.h ?? state.editsStore[k]?.h };
     else delete state.editsStore[k];
@@ -115,7 +117,7 @@ const SECTIONS = [
   { title: 'Background removal', controls: [
     { k: 'crPopOutOnly', t: 'check', label: 'Pop-out layer only' },
     { t: 'hint', show: (c) => hasCutout(c) && c.crPopOutOnly && !c.popOutEnabled, text: 'The cutout only shows on the pop-out layer. Enable Pop-out, or untick "Pop-out layer only".' },
-    { k: 'crEnabled', k2: 'crColor', t: 'tint', label: 'Remove color', eyedrop: true },
+    { k: 'crEnabled', k2: 'crColor', t: 'tint', label: 'Remove color' },
     num('crThreshold', 'Threshold', 0, 100, 1),
     { k: 'crEdgesOnly', t: 'check', label: 'Edges only' },
     num('crFeather', 'Feather', 0, 10, 1),
@@ -200,18 +202,18 @@ function buildControl(c, ctl) {
     c.sync = (cfg) => { s.value = srcOf(c, cfg)[c.k]; };
   } else if (c.t === 'tint') {
     const b = el('input'); b.type = 'checkbox';
-    const col = el('input'); col.type = 'color';
+    const col = el('input'); col.type = 'color'; // the native picker has its own eyedropper
+    const hex = el('input'); hex.type = 'text'; hex.maxLength = 7; hex.size = 7; hex.spellcheck = false; hex.placeholder = '#rrggbb';
     b.addEventListener('change', () => set(c.k, b.checked));
     col.addEventListener('input', () => set(c.k2, col.value));
-    ctl.append(b, col);
-    if (c.eyedrop && 'EyeDropper' in window) {
-      const eb = el('button', null, 'Eyedrop');
-      eb.addEventListener('click', async () => {
-        try { const r = await new window.EyeDropper().open(); col.value = r.sRGBHex; set(c.k2, r.sRGBHex); set(c.k, true); } catch { /* cancelled */ }
-      });
-      ctl.append(eb);
-    }
-    c.sync = (cfg) => { b.checked = !!cfg[c.k]; col.value = cfg[c.k2]; };
+    hex.addEventListener('input', () => {
+      let v = hex.value.trim();
+      if (/^[0-9a-f]{6}$/i.test(v)) v = '#' + v;
+      if (/^#[0-9a-f]{6}$/i.test(v)) set(c.k2, v.toLowerCase());
+    });
+    hex.addEventListener('blur', () => { hex.value = col.value; });
+    ctl.append(b, col, hex);
+    c.sync = (cfg) => { b.checked = !!cfg[c.k]; col.value = cfg[c.k2]; if (document.activeElement !== hex) hex.value = cfg[c.k2]; };
   } else if (c.t === 'file') {
     const p = el('span', 'path', 'none');
     const br = el('button', null, 'Browse');
@@ -288,6 +290,12 @@ function syncControls() {
 async function bitmapFromPath(p) {
   const bytes = await api.readFile(p);
   return createImageBitmap(new Blob([bytes]));
+}
+
+/** Bitmap for a list item: a file on disk, or the bytes of a pasted image. */
+const itemBytes = (it) => (it.bytes ? Promise.resolve(it.bytes) : api.readFile(it.path));
+async function itemBitmap(it) {
+  return createImageBitmap(new Blob([await itemBytes(it)]));
 }
 
 async function ensureAssets(cfg) {
@@ -725,6 +733,7 @@ async function setItems(items, skipped = 0) {
   $('#grid').hidden = !multi;
   $('#batchBar').hidden = !multi;
   $('#btnFrameAll').hidden = !multi;
+  $('#btnZip').hidden = !multi;
   refreshGrid();
   syncControls();
   if (items.length) await selectItem(0);
@@ -767,7 +776,7 @@ async function selectItem(i) {
   syncControls();
   if (!it) return;
   try {
-    const bitmap = await bitmapFromPath(it.path);
+    const bitmap = await itemBitmap(it);
     if (curItem() !== it) { bitmap.close(); return; }
     if (it.dims && (it.dims.w !== bitmap.width || it.dims.h !== bitmap.height)) {
       delete it.override.popEdits; // saved for a different-size file: pixel coordinates no longer line up
@@ -827,6 +836,8 @@ function updateBatchBar() {
   $('#batchCount').textContent = `${n} of ${state.items.length} selected` + (state.skipped ? ` · ${state.skipped} skipped (Token/Frame in name)` : '');
   $('#btnFrameAll').textContent = `Save all (${n})`;
   $('#btnFrameAll').disabled = n === 0;
+  $('#btnZip').textContent = `Save all as ZIP (${n})`;
+  $('#btnZip').disabled = n === 0;
 }
 
 async function loadThumbs(gen) {
@@ -834,7 +845,7 @@ async function loadThumbs(gen) {
     if (gen !== state.gen) return;
     if (it.thumb) continue;
     try {
-      const bytes = await api.readFile(it.path);
+      const bytes = await itemBytes(it);
       const bmp = await createImageBitmap(new Blob([bytes]), { resizeWidth: 192, resizeQuality: 'medium' });
       const c = document.createElement('canvas');
       c.width = 192; c.height = 144;
@@ -855,7 +866,7 @@ function setStatus(text, warn = false) {
 }
 
 async function renderItemBlob(it) {
-  const bmp = await bitmapFromPath(it.path);
+  const bmp = await itemBitmap(it);
   try {
     const cfg = { ...state.shared, ...it.override };
     await ensureAssets(cfg);
@@ -885,7 +896,7 @@ async function saveCurrent(asNew) {
   const it = curItem();
   if (!it || !needFrame()) return;
   let out = it.outPath;
-  if (asNew) {
+  if (asNew || !it.path) { // a pasted image has no home folder yet
     out = await api.pickSave(it.outPath);
     if (!out) return;
   } else if (it.exists && !state.out.overwrite && !confirm(`${it.base} Token.webp already exists. Overwrite it?`)) return;
@@ -928,6 +939,74 @@ async function frameAll() {
   updateBatchBar();
 }
 
+/** Render every ticked image into one .zip (existing tokens on disk don't matter: nothing is written next to the sources). */
+async function zipAll() {
+  if (!needFrame()) return;
+  const todo = state.items.filter((i) => i.selected);
+  if (!todo.length) { setStatus('Nothing selected.', true); return; }
+  const first = todo.find((i) => i.path);
+  const dir = first ? dirOf(first.path) : state.lastDir || '';
+  const out = await api.pickSave(dir ? `${dir}${sepOf(dir)}Tokens.zip` : 'Tokens.zip', 'zip');
+  if (!out) return;
+  const prog = $('#prog');
+  prog.hidden = false;
+  prog.max = todo.length;
+  $('#btnZip').disabled = $('#btnFrameAll').disabled = true;
+  const files = [];
+  const used = new Set();
+  let fail = 0;
+  for (let n = 0; n < todo.length; n++) {
+    const it = todo[n];
+    prog.value = n;
+    setStatus(`Rendering ${n + 1}/${todo.length}: ${it.base}`);
+    try {
+      const blob = await renderItemBlob(it);
+      let name = `${it.base} Token.webp`;
+      for (let k = 2; used.has(name.toLowerCase()); k++) name = `${it.base} Token (${k}).webp`;
+      used.add(name.toLowerCase());
+      files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
+    } catch (err) {
+      it.tag = `error: ${err.message}`;
+      fail++;
+      updateTile(state.items.indexOf(it));
+    }
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  prog.hidden = true;
+  try {
+    if (files.length) {
+      await api.writeFile(out, makeZip(files));
+      state.lastOut = out;
+      $('#btnShow').hidden = false;
+    }
+    setStatus(files.length ? `Saved ${files.length} token${files.length === 1 ? '' : 's'} to ${out}${fail ? ` (${fail} failed)` : ''}` : 'Nothing could be rendered.', fail > 0 || !files.length);
+  } catch (err) {
+    setStatus(`Could not write the zip: ${err.message}`, true);
+  }
+  updateBatchBar();
+}
+
+/** Ctrl+V: a copied image file opens like a dropped one; raw clipboard pixels become an unsaved item. */
+async function handlePaste(e) {
+  const t = e.target;
+  if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && t.type === 'text'))) return;
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+  if (!files.length) return;
+  e.preventDefault();
+  const paths = files.map((f) => api.pathForFile(f)).filter(Boolean);
+  if (paths.length) { await openImages(paths); return; }
+  const f = files[0];
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  const base = 'Pasted image';
+  const dir = state.lastDir || '';
+  const it = {
+    name: base, base, path: '', bytes, outPath: dir ? `${dir}${sepOf(dir)}${base} Token.webp` : `${base} Token.webp`,
+    exists: false, selected: true, override: {}, redo: [], editVer: 0, tag: '', thumb: null
+  };
+  await setItems([it]);
+  setStatus('Pasted image: Save token will ask where to put it. Edits to pasted images are not remembered between sessions.');
+}
+
 // ---------------------------------------------------------------- wiring
 async function handleDrop(e) {
   const paths = [...e.dataTransfer.files].map((f) => api.pathForFile(f)).filter(Boolean);
@@ -956,6 +1035,7 @@ function setup() {
   $('#btnAll').onclick = () => { state.items.forEach((i) => (i.selected = true)); refreshGrid(); };
   $('#btnNone').onclick = () => { state.items.forEach((i) => (i.selected = false)); refreshGrid(); };
   $('#btnFrameAll').onclick = frameAll;
+  $('#btnZip').onclick = zipAll;
   $('#btnSave').onclick = () => saveCurrent(false);
   $('#btnSaveAs').onclick = () => saveCurrent(true);
   $('#btnShow').onclick = () => state.lastOut && api.showInFolder(state.lastOut);
@@ -974,6 +1054,7 @@ function setup() {
   };
   window.addEventListener('keydown', (e) => onKey(e, true));
   window.addEventListener('keyup', (e) => onKey(e, false));
+  window.addEventListener('paste', handlePaste);
   let depth = 0;
   window.addEventListener('dragenter', (e) => { e.preventDefault(); depth++; document.body.classList.add('dragging'); });
   window.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; document.body.classList.remove('dragging'); } });

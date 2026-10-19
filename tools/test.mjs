@@ -7,6 +7,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -229,6 +230,53 @@ async function main() {
   await app.ev(`document.querySelector('#btnDefaultFrame').click()`);
   await sleep(500);
   check('Default button restores assets/default.webp', (await app.ev('__tf.frame.name')) === 'default');
+
+  // -- colour controls: no extra eyedropper button, hex field drives the colour
+  const hexT = await app.ev(`(() => {
+    const row = [...document.querySelectorAll('#panel .row')].find((r) => r.querySelector('label').textContent === 'Remove color');
+    const hex = row.querySelector('input[type=text]');
+    hex.value = 'FF8800'; hex.dispatchEvent(new Event('input', { bubbles: true }));
+    return { buttons: row.querySelectorAll('button').length, color: __tf.shared.crColor, swatch: row.querySelector('input[type=color]').value };
+  })()`);
+  check('Remove color has no eyedropper button; hex field sets the colour', hexT.buttons === 0 && hexT.color === '#ff8800' && hexT.swatch === '#ff8800', J(hexT));
+
+  // -- paste: raw clipboard pixels become an unsaved item with no path
+  const pasted = await app.ev(`(async () => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([Uint8Array.from(atob(${J(fs.readFileSync(artFile).toString('base64'))}), (c) => c.charCodeAt(0))], 'image.png', { type: 'image/png' }));
+    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await new Promise((r) => { const t = setInterval(() => { if (__tf.base && __tf.items[0]?.bytes) { clearInterval(t); r(); } }, 50); });
+    return { n: __tf.items.length, path: __tf.items[0].path, w: __tf.base.bitmap.width };
+  })()`);
+  check('pasted image opens as an unsaved item', pasted.n === 1 && pasted.path === '' && pasted.w === 400, J(pasted));
+
+  // -- ZIP writer: structure and checksums read back independently with node's zlib
+  const zb64 = await app.ev(`(async () => { const { makeZip } = await import('./lib/zip.js'); const enc = new TextEncoder();
+    const z = makeZip([{ name: 'Knight Token.webp', data: enc.encode('hello world') }, { name: 'Ñandú ’x’ Token.webp', data: new Uint8Array(70000).map((_, i) => i % 251) }]);
+    let s = ''; for (let i = 0; i < z.length; i += 8192) s += String.fromCharCode(...z.subarray(i, i + 8192)); return btoa(s); })()`);
+  const z = Buffer.from(zb64, 'base64');
+  const eocd = z.length - 22;
+  const count = z.readUInt16LE(eocd + 10);
+  let p = z.readUInt32LE(eocd + 16);
+  const zipped = [];
+  for (let i = 0; i < count; i++) {
+    const crc = z.readUInt32LE(p + 16), size = z.readUInt32LE(p + 24), nl = z.readUInt16LE(p + 28), off = z.readUInt32LE(p + 42);
+    const name = z.toString('utf8', p + 46, p + 46 + nl);
+    const lh = off + 30 + z.readUInt16LE(off + 26) + z.readUInt16LE(off + 28);
+    zipped.push({ name, ok: zlib.crc32(z.subarray(lh, lh + size)) === crc && z.readUInt32LE(off) === 0x04034b50 });
+    p += 46 + nl;
+  }
+  check('ZIP writer: entries, names and CRCs read back correctly', z.readUInt32LE(eocd) === 0x06054b50 && count === 2 && zipped.every((e) => e.ok) && zipped[1].name === 'Ñandú ’x’ Token.webp', J(zipped));
+  // cross-check with the OS tools when available
+  if (process.platform === 'win32') {
+    const zf = path.join(os.tmpdir(), `tf-check-${process.pid}.zip`); // plain name: PowerShell treats a smart quote as a quote
+    fs.writeFileSync(zf, z);
+    try {
+      const out = execFileSync('powershell', ['-NoProfile', '-Command', `Add-Type -AssemblyName System.IO.Compression.FileSystem; ([IO.Compression.ZipFile]::OpenRead('${zf.replace(/'/g, "''")}')).Entries | ForEach-Object { $_.FullName + ':' + $_.Length }`], { encoding: 'utf8' });
+      check('ZIP opens in .NET ZipFile', out.includes('Knight Token.webp:11') && out.includes(':70000'), out.trim().split(/\r?\n/).join(' | '));
+    } catch (e) { check('ZIP opens in .NET ZipFile', false, String(e.message).slice(0, 120)); }
+    fs.rmSync(zf, { force: true });
+  }
 
   app.close();
 }
