@@ -33,9 +33,7 @@ so BRIA's RMBG-1.4 / 2.0 (non-commercial licenses) are acceptable; BiRefNet ONNX
 inference speed were not verified. Re-check the licenses before shipping anything commercial.
 
 ## Known limits and rough edges
-- Manual edits (`popEdits`) and per-image overrides are not saved between sessions.
-- Opening a folder auto-loads the first `Frame*` file, which also matches names like `Framed Knight`.
-- No "restore default frame" button; browse to `assets\default.webp`.
+- Per-image overrides and manual edits are saved to `edits.json` in userData, keyed by source path (popEdits are dropped if the image size changed). Undo history is not saved, and an edit made under 0.5 s before closing the window can be lost.
 - A non-square frame is stretched to a square (same as the module and as the old Python script's final resize).
 - Pixel view renders at 2x, so slider drags are slower while it is on.
 - `npm install` may skip Electron's binary download in some environments: run `node node_modules\electron\install.js`.
