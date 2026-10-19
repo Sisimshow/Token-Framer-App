@@ -12,6 +12,7 @@ const state = {
   shared: { ...DEFAULTS },
   out: { ...OUT_DEFAULTS },
   ui: { popOutPreview: false, showCutout: false },
+  editsStore: {},       // path key -> {override, w, h}, mirrors edits.json
   frame: null,          // {path, name, bitmap, hole, holeCache}
   items: [], cur: -1, skipped: 0, editOnly: false, gen: 0,
   assets: new Map(),    // path -> ImageBitmap | null
@@ -38,6 +39,24 @@ function persist() {
   persistTimer = setTimeout(() => {
     api.setSettings({ shared: state.shared, out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '' });
   }, 500);
+}
+
+// Per-image overrides (incl. manual cutout edits) survive restarts: edits.json in userData, keyed by source path.
+// popEdits are in source pixels, so each entry also records the image size and is dropped if the file changed shape.
+const editKey = (p) => p.toLowerCase();
+let editsTimer = 0;
+function flushEdits() {
+  clearTimeout(editsTimer);
+  for (const it of state.items) {
+    const k = editKey(it.path);
+    if (Object.keys(it.override).length) state.editsStore[k] = { override: it.override, w: it.dims?.w ?? state.editsStore[k]?.w, h: it.dims?.h ?? state.editsStore[k]?.h };
+    else delete state.editsStore[k];
+  }
+  return api.setEdits(state.editsStore);
+}
+function persistEdits() {
+  clearTimeout(editsTimer);
+  editsTimer = setTimeout(flushEdits, 500);
 }
 
 // ---------------------------------------------------------------- control schema
@@ -250,6 +269,7 @@ function setKey(c, k, v) {
   if (scope === 'cfg') schedulePreview(k.startsWith('cr') ? 250 : 30);
   else if (scope === 'ui') schedulePreview(0);
   persist();
+  persistEdits();
   updateTile(state.cur);
 }
 
@@ -477,6 +497,7 @@ function afterEdit() {
   if (!it) return;
   it.editVer++;
   state.cut = null;
+  persistEdits();
   syncControls();
   updateTile(state.cur);
   schedulePreview(0);
@@ -687,10 +708,12 @@ function mkItem(f, names) {
   const dir = dirOf(f.path);
   const outPath = `${dir}${sepOf(f.path)}${f.base} Token.webp`;
   const exists = names ? names.has(`${f.base} token.webp`.toLowerCase()) : false;
-  return { name: f.name, base: f.base, path: f.path, outPath, exists, selected: !exists || state.out.overwrite, override: {}, redo: [], editVer: 0, tag: '', thumb: null };
+  const saved = state.editsStore[editKey(f.path)];
+  return { name: f.name, base: f.base, path: f.path, outPath, exists, selected: !exists || state.out.overwrite, override: saved ? structuredClone(saved.override) : {}, dims: saved?.w ? { w: saved.w, h: saved.h } : null, redo: [], editVer: 0, tag: '', thumb: null };
 }
 
 async function setItems(items, skipped = 0) {
+  flushEdits(); // the outgoing items' pending edits
   state.gen++;
   state.items = items;
   state.skipped = skipped;
@@ -715,7 +738,7 @@ async function openFolder(dir) {
   const names = new Set(r.names);
   const all = r.files;
   const items = all.filter((f) => !/token|frame/i.test(f.base)).map((f) => mkItem(f, names));
-  const frames = all.filter((f) => /^frame/i.test(f.base));
+  const frames = all.filter((f) => /^frame(?![a-z])/i.test(f.base));
   if (frames.length) {
     await loadFrame(frames[0].path);
     setStatus(`Frame from folder: ${frames[0].name}${frames.length > 1 ? ` (+${frames.length - 1} more Frame files, browse to switch)` : ''}`);
@@ -746,6 +769,13 @@ async function selectItem(i) {
   try {
     const bitmap = await bitmapFromPath(it.path);
     if (curItem() !== it) { bitmap.close(); return; }
+    if (it.dims && (it.dims.w !== bitmap.width || it.dims.h !== bitmap.height)) {
+      delete it.override.popEdits; // saved for a different-size file: pixel coordinates no longer line up
+      it.editVer++;
+      updateTile(i);
+    }
+    it.dims = { w: bitmap.width, h: bitmap.height };
+    persistEdits();
     state.base?.bitmap.close?.();
     state.base = { path: it.path, bitmap };
     state.cut = null;
@@ -914,6 +944,7 @@ function setup() {
   $('#btnImages').onclick = async () => openImages(await api.pickImages({ multi: true, defaultPath: state.lastDir }));
   $('#btnFolder').onclick = async () => { const d = await api.pickFolder(state.lastDir); if (d) openFolder(d); };
   $('#btnFrame').onclick = async () => { const r = await api.pickImages({ multi: false, defaultPath: state.frame ? dirOf(state.frame.path) : state.lastDir }); if (r[0]) loadFrame(r[0]); };
+  $('#btnDefaultFrame').onclick = async () => { if (await loadFrame(await api.defaultFramePath())) setStatus('Using the default frame.'); };
   $('#btnSeed').onclick = () => {
     if (!state.frame) return setStatus('Choose a frame first.', true);
     const on = !state.pickSeed;
@@ -929,7 +960,7 @@ function setup() {
   $('#btnSaveAs').onclick = () => saveCurrent(true);
   $('#btnShow').onclick = () => state.lastOut && api.showInFolder(state.lastOut);
   $('#editOnly').onchange = (e) => { state.editOnly = e.target.checked; };
-  $('#btnResetImg').onclick = () => { const it = curItem(); if (it) { it.override = {}; syncControls(); schedulePreview(0); updateTile(state.cur); } };
+  $('#btnResetImg').onclick = () => { const it = curItem(); if (it) { it.override = {}; it.redo = []; it.editVer++; state.cut = null; syncControls(); schedulePreview(0); updateTile(state.cur); persistEdits(); } };
   $('#btnDefaults').onclick = () => {
     if (!confirm('Reset all shared settings to their defaults?')) return;
     state.shared = { ...DEFAULTS };
@@ -956,6 +987,7 @@ async function init() {
   state.shared = { ...DEFAULTS, ...(s.shared || {}) };
   state.out = { ...OUT_DEFAULTS, ...(s.out || {}) };
   state.lastDir = s.lastDir || '';
+  state.editsStore = await api.getEdits();
   syncControls();
   const def = await api.defaultFramePath();
   if (s.framePath && (await api.exists(s.framePath))) await loadFrame(s.framePath);
@@ -963,4 +995,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, eff, compositeFor, resolveCfg }); // DevTools / tests

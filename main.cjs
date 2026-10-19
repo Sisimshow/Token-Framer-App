@@ -9,6 +9,7 @@ const IMG_FILTER = [{ name: 'Images', extensions: ['webp', 'png', 'jpg', 'jpeg',
 let win = null;
 
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+const editsFile = () => path.join(app.getPath('userData'), 'edits.json');
 
 function createWindow() {
   win = new BrowserWindow({
@@ -89,5 +90,15 @@ ipcMain.handle('settings:get', async () => {
 ipcMain.handle('settings:set', async (_e, data) => {
   fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
   fs.writeFileSync(settingsFile(), JSON.stringify(data, null, 2));
+  return true;
+});
+
+// Per-image overrides and manual cutout edits, keyed by source path; kept apart from settings.json because they can get large.
+ipcMain.handle('edits:get', async () => {
+  try { return JSON.parse(fs.readFileSync(editsFile(), 'utf8')); } catch { return {}; }
+});
+ipcMain.handle('edits:set', async (_e, data) => {
+  fs.mkdirSync(path.dirname(editsFile()), { recursive: true });
+  fs.writeFileSync(editsFile(), JSON.stringify(data));
   return true;
 });

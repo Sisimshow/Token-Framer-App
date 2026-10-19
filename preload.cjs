@@ -13,5 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   showInFolder: (p) => ipcRenderer.invoke('shell:show', p),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (data) => ipcRenderer.invoke('settings:set', data),
+  getEdits: () => ipcRenderer.invoke('edits:get'),
+  setEdits: (data) => ipcRenderer.invoke('edits:set', data),
   pathForFile: (file) => webUtils.getPathForFile(file)
 });

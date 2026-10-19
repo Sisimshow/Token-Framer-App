@@ -15,6 +15,9 @@ Token Framer Foundry module (MIT); the module is a separate project and is not t
   (`Runtime.evaluate`, `Input.dispatchMouseEvent`, `Page.captureScreenshot`). `window.__tf` exposes the app state and a few
   functions for this.
 
+- Regression harness: `node tools/test.mjs` (Node 22+, no deps) runs the app over CDP and checks golden composites,
+  cutout tools, edit persistence and folder rules. `--update` rewrites `tools/fixtures/golden-*.png`; only do that on purpose.
+
 ## Layout
 - `main.cjs`: window, native dialogs, file IPC (`fs:*`), settings JSON in `userData`. `preload.cjs`: the `window.api` bridge.
   `contextIsolation` is on; add new file or OS access as an IPC handler, not by loosening that.

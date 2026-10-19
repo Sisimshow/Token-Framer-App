@@ -39,7 +39,7 @@ inference speed were not verified. Re-check the licenses before shipping anythin
 - A non-square frame is stretched to a square (same as the module and as the old Python script's final resize).
 - Pixel view renders at 2x, so slider drags are slower while it is on.
 - `npm install` may skip Electron's binary download in some environments: run `node node_modules\electron\install.js`.
-- No packaging or installer, no automated tests in the repo.
+- No packaging or installer. Tests: `node tools/test.mjs` (see .claude/CLAUDE.md).
 
 ## How it was verified (not committed; recreate if needed)
 Driven over the Chrome DevTools Protocol against a scratch `--user-data-dir`, with synthetic test art (flat background, a donut with an enclosed
