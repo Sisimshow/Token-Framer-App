@@ -25,7 +25,7 @@ Token Framer Foundry module (MIT); the module is a separate project and is not t
   `onnxruntime-node` (DirectML, CPU fallback); model downloads on first use to `userData\models`, mattes are cached in
   `userData\mattes` by input hash. The ONNX input is fixed at 1024x1024. `renderer/lib/matte.js` holds the sensitivity/blur/offset
   maths (copied from the ComfyUI RMBG node); the `{type:'ai'}` edit in `colorremoval.js` turns the matte into a removal mask.
-- Recent frames sidebar (`#frames`, toggled by the toolbar "Recent" button): `state.recentFrames` (max 24, saved in `settings.json`) is fed by
+- Recent frames sidebar (`#frames`, toggled by the toolbar "Recent Frames" button; the default frame is always pinned first): `state.recentFrames` (max 24, saved in `settings.json`) is fed by
   `loadFrame`; clicking a tile loads that frame only (`keepOrder` so the list doesn't jump). Thumbnails are generated lazily, memory-only.
 - `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).
 - `renderer/app.js`: UI, state, tools, saving. `renderer/lib/composite.js`: layer compositing and placement.

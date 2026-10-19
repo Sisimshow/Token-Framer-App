@@ -10,19 +10,19 @@
 <body>
   <div id="app">
     <aside id="frames" hidden>
-      <div class="fhead"><strong>Recent frames</strong><button id="btnFrameBrowse" title="Browse for a frame image">Browse…</button></div>
+      <div class="fhead"><strong>Recent frames</strong></div>
       <div id="frameList"></div>
     </aside>
     <section id="left">
       <div id="toolbar">
+        <span class="tlabel">Image</span>
         <button id="btnImages" title="Pick one or more images">Open Images…</button>
         <button id="btnFolder" title="Pick a folder; every image without Token/Frame in its name is listed">Open Folder…</button>
         <span class="sep"></span>
-        <button id="btnFrames" title="Show or hide the list of recently used frames">Recent</button>
-        <button id="btnFrame">Frame…</button>
-        <button id="btnDefaultFrame" title="Go back to the built-in default frame">Default</button>
+        <span class="tlabel">Frame</span>
+        <button id="btnFrame" title="Pick a frame image">Open Frame…</button>
+        <button id="btnFrames" title="Show or hide the list of recent frames (the default frame is always at the top)">Recent Frames</button>
         <span id="frameName" class="muted">no frame</span>
-        <button id="btnSeed" title="Click the preview to click the middle of the frame so Auto center can find it">Pick center point</button>
         <span class="grow"></span>
         <label class="check" title="Show the preview without smoothing, so zoomed-in pixels are sharp blocks"><input type="checkbox" id="pixelView"> Pixel view</label>
       </div>

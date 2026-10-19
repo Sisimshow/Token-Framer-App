@@ -39,7 +39,7 @@ author's SwarmUI RMBG workflow and the maths in `renderer/lib/matte.js` matches 
 - Not done: soft (partial) alpha (the matte is thresholded at 50 %, then the usual feather/grow apply), refine_foreground, "AI remove all" for a whole folder.
 
 ## Recent frames sidebar
-Toolbar "Recent" opens a left sidebar of recently used frames (max 24, newest first, thumbnails, open/closed state remembered). Clicking a
+Toolbar "Recent Frames" opens a left sidebar (default frame always pinned at the top, no separate Default button) of recently used frames (max 24, newest first, thumbnails, open/closed state remembered). Clicking a
 frame restores the frame image only, not per-frame settings (deliberate choice). Missing files show as "(missing)" and drop out on click.
 
 ## Known limits and rough edges

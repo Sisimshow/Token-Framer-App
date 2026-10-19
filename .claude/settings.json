@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check renderer/app.js)",
+      "Bash(node --check tools/test.mjs)",
+      "Bash(node tools/test.mjs)",
+      "Bash(node run3.mjs)",
+      "Bash(sed -i 's|toggled by the toolbar \"Recent\" button|toggled by the toolbar \"Recent Frames\" button; the default frame is always pinned first|' .claude/CLAUDE.md)",
+      "Bash(sed -i 's|^Toolbar \"Recent\" opens a left sidebar of recently used frames|Toolbar \"Recent Frames\" opens a left sidebar \\(default frame always pinned at the top, no separate Default button\\) of recently used frames|' HANDOFF.md)",
+      "Bash(git add *)",
+      "Bash(git commit -qm 'Toolbar labels and renames, pin default frame in sidebar, move Pick center point next to Auto center *)"
+    ]
+  }
+}

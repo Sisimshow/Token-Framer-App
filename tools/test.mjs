@@ -226,10 +226,16 @@ async function main() {
   check('folder frame pick ignores "Framed Knight"', fo.frame === 'Frame gold', J(fo));
   check('folder items skip names containing token/frame', J(fo.items) === J(['Goblin.png']), J(fo.items));
 
-  // -- default frame button
-  await app.ev(`document.querySelector('#btnDefaultFrame').click()`);
+  // -- default frame is pinned at the top of the frames sidebar
+  await app.ev(`(__tf.ui.framesOpen = false, document.querySelector('#btnFrames').click())`);
   await sleep(500);
-  check('Default button restores assets/default.webp', (await app.ev('__tf.frame.name')) === 'default');
+  const pin = await app.ev(`(() => { const t = document.querySelector('#frameList .ftile'); const r = { pinned: t.classList.contains('pinned'), nm: t.querySelector('.nm').textContent, x: !!t.querySelector('.x') }; t.click(); return r; })()`);
+  await sleep(500);
+  check('default frame is pinned first, has no remove button, and loads on click', pin.pinned && pin.nm === 'Default' && !pin.x && (await app.ev('__tf.frame.name')) === 'default', J(pin));
+  const bar = await app.ev(`[...document.querySelectorAll('#toolbar > *')].map((e) => (e.textContent || e.className).trim()).filter(Boolean).join('|')`);
+  check('toolbar: labels and buttons in the requested order', bar.startsWith('Image|Open Images…|Open Folder…|sep|Frame|Open Frame…|Recent Frames'), bar);
+  const seedBtn = await app.ev(`(() => { const kids = [...document.querySelectorAll('#panel .row')[0].querySelectorAll('.ctl > *')].map((e) => e.textContent.trim()); return { first: kids[0], second: kids[1], inToolbar: !!document.querySelector('#toolbar #btnSeed, #toolbar #btnDefaultFrame') }; })()`);
+  check('Pick center point sits left of Auto center in the panel; no Default button in the toolbar', seedBtn.first === 'Pick center point' && seedBtn.second === 'Auto center' && !seedBtn.inToolbar, J(seedBtn));
 
   // -- colour controls: no extra eyedropper button, hex field drives the colour
   const hexT = await app.ev(`(() => {
@@ -319,15 +325,15 @@ async function main() {
   const rec = await app.ev('__tf.recentFrames');
   check('recent frames: most recent first, no duplicates (case-insensitive)', rec.length === 2 && rec[0].toLowerCase() === fA.toLowerCase() && rec[1] === fB, J(rec));
 
-  await app.ev(`document.querySelector('#btnFrames').click()`);
+  await app.ev(`(__tf.ui.framesOpen || document.querySelector('#btnFrames').click(), __tf.renderFrameList(), 1)`);
   await sleep(600);
   const ui1 = await app.ev(`(() => { const t = [...document.querySelectorAll('#frameList .ftile')];
     const painted = t.map((x) => { const c = x.querySelector('canvas'); const d = c.getContext('2d').getImageData(0, 0, 192, 192).data; for (let i = 3; i < d.length; i += 4) if (d[i]) return true; return false; });
     return { shown: !document.querySelector('#frames').hidden, tiles: t.length, painted, cur: t.filter((x) => x.classList.contains('cur')).length }; })()`);
-  check('sidebar opens with one painted tile per recent frame, current one highlighted', ui1.shown && ui1.tiles === 2 && ui1.painted.every(Boolean) && ui1.cur === 1, J(ui1));
+  check('sidebar opens with one painted tile per recent frame, current one highlighted', ui1.shown && ui1.tiles === 3 && ui1.painted.every(Boolean) && ui1.cur === 1, J(ui1));
 
   const before = await app.ev('JSON.stringify(__tf.shared)');
-  await app.ev(`document.querySelectorAll('#frameList .ftile')[1].click()`);
+  await app.ev(`document.querySelectorAll('#frameList .ftile')[2].click()`);
   await sleep(500);
   const click = await app.ev('({ name: __tf.frame.name, order: __tf.recentFrames, shared: JSON.stringify(__tf.shared) })');
   check('clicking a tile loads that frame, keeps list order, leaves settings alone', click.name === 'Frame B ’b’' && click.order[1] === fB && click.shared === before, J({ name: click.name, order: click.order }));

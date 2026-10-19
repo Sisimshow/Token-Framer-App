@@ -17,7 +17,8 @@ const state = {
   ui: { popOutPreview: false, showCutout: false },
   editsStore: {},       // path key -> {override, w, h}, mirrors edits.json
   frame: null,          // {path, name, bitmap, hole, holeCache}
-  recentFrames: [],     // frame image paths, most recently used first (max RECENT_MAX)
+  defaultFrame: '',     // path of assets/default.webp, always pinned at the top of the frames sidebar
+  recentFrames: [],   // frame image paths, most recently used first (max RECENT_MAX)
   items: [], cur: -1, skipped: 0, editOnly: false, gen: 0,
   assets: new Map(),    // path -> ImageBitmap | null
   base: null,           // {path, bitmap} for the previewed item
@@ -74,7 +75,7 @@ const offs = (p, label, show, r = 256) => [
 
 const SECTIONS = [
   { title: 'Art placement', open: true, controls: [
-    { k: 'fitEnabled', t: 'check', label: 'Auto center', show: () => holeValid() },
+    { k: 'fitEnabled', t: 'autocenter', label: '' },
     { k: 'fitAnchor', t: 'select', label: 'Vertical anchor', show: fit, opts: [['top', 'Top (keeps faces)'], ['center', 'Center']] },
     num('fitScale', 'Scale ×', 0.5, 2, 0.01, fit),
     ...offs('fitOffset', 'Nudge', fit, 200),
@@ -249,6 +250,17 @@ function buildControl(c, ctl) {
   } else if (c.t === 'hint') {
     ctl.append(el('span', 'hint', c.text));
     c.sync = () => {};
+  } else if (c.t === 'autocenter') {
+    // [Pick center point] [x Auto center]: the button stays available even when detection failed (the checkbox only shows once a hole is found)
+    const pick = el('button', null, 'Pick center point');
+    pick.title = 'Click the middle of the frame in the preview so Auto center can find it';
+    pick.addEventListener('click', toggleSeedPick);
+    const wrap = el('label', 'check');
+    const b = el('input'); b.type = 'checkbox';
+    b.addEventListener('change', () => set(c.k, b.checked));
+    wrap.append(b, ' Auto center');
+    ctl.append(pick, wrap);
+    c.sync = (cfg) => { b.checked = !!cfg[c.k]; wrap.style.display = holeValid() ? '' : 'none'; pick.classList.toggle('active', state.pickSeed); };
   } else if (c.t === 'aitool') {
     ctl.classList.add('wrap');
     const b = el('button', null, 'AI remove (RMBG-2.0)');
@@ -758,6 +770,7 @@ const frameThumbs = new Map(); // lower-case path -> canvas | 'missing' (memory 
 
 /** Put a frame at the top of the recent list (or, with keepOrder, only make sure it is in it). */
 function rememberFrame(p, keepOrder = false) {
+  if (state.defaultFrame && sameFile(p, state.defaultFrame)) return; // pinned, not part of the recent list
   const has = state.recentFrames.some((x) => sameFile(x, p));
   if (keepOrder && has) return;
   state.recentFrames = [p, ...state.recentFrames.filter((x) => !sameFile(x, p))].slice(0, RECENT_MAX);
@@ -791,16 +804,20 @@ function renderFrameList() {
   const list = $('#frameList');
   if (!state.ui.framesOpen) return;
   list.innerHTML = '';
-  for (const p of state.recentFrames) {
-    const t = el('div', 'ftile');
+  for (const p of [state.defaultFrame, ...state.recentFrames].filter(Boolean)) {
+    const pinned = sameFile(p, state.defaultFrame);
+    const t = el('div', pinned ? 'ftile pinned' : 'ftile');
     t.title = p;
     if (state.frame && sameFile(state.frame.path, p)) t.classList.add('cur');
     const cv = el('canvas');
     cv.width = cv.height = 192;
-    const x = el('button', 'x', '✕');
-    x.title = 'Remove from this list';
-    x.addEventListener('click', (e) => { e.stopPropagation(); forgetFrame(p); });
-    t.append(cv, el('div', 'nm', baseOf(p)), x);
+    t.append(cv, el('div', 'nm', pinned ? 'Default' : baseOf(p)));
+    if (!pinned) {
+      const x = el('button', 'x', '✕');
+      x.title = 'Remove from this list';
+      x.addEventListener('click', (e) => { e.stopPropagation(); forgetFrame(p); });
+      t.append(x);
+    }
     t.addEventListener('click', async () => {
       if (t.classList.contains('missing')) { forgetFrame(p); setStatus(`Removed ${baseOf(p)} from the list (file not found).`, true); return; }
       if (state.frame && sameFile(state.frame.path, p)) return;
@@ -841,6 +858,16 @@ async function loadFrame(p, { keepOrder = false } = {}) {
     setStatus(`Could not load frame: ${err.message}`, true);
     return false;
   }
+}
+
+function toggleSeedPick() {
+  if (!state.frame) return setStatus('Choose a frame first.', true);
+  const on = !state.pickSeed;
+  if (state.tool) setTool(state.tool);
+  state.pickSeed = on;
+  $('#view').classList.toggle('seed', state.pickSeed);
+  if (state.pickSeed) setStatus('Click the middle of the frame in the preview.');
+  syncControls();
 }
 
 function pickSeedAt(e) {
@@ -1180,17 +1207,7 @@ function setup() {
   $('#btnImages').onclick = async () => openImages(await api.pickImages({ multi: true, defaultPath: state.lastDir }));
   $('#btnFolder').onclick = async () => { const d = await api.pickFolder(state.lastDir); if (d) openFolder(d); };
   $('#btnFrame').onclick = async () => { const r = await api.pickImages({ multi: false, defaultPath: state.frame ? dirOf(state.frame.path) : state.lastDir }); if (r[0]) loadFrame(r[0]); };
-  $('#btnDefaultFrame').onclick = async () => { if (await loadFrame(await api.defaultFramePath())) setStatus('Using the default frame.'); };
   $('#btnFrames').onclick = () => { state.ui.framesOpen = !state.ui.framesOpen; applyFramesOpen(); persist(); };
-  $('#btnFrameBrowse').onclick = () => $('#btnFrame').click();
-  $('#btnSeed').onclick = () => {
-    if (!state.frame) return setStatus('Choose a frame first.', true);
-    const on = !state.pickSeed;
-    if (state.tool) setTool(state.tool);
-    state.pickSeed = on;
-    $('#view').classList.toggle('seed', state.pickSeed);
-    if (state.pickSeed) setStatus('Click the middle of the frame in the preview.');
-  };
   $('#btnAll').onclick = () => { state.items.forEach((i) => (i.selected = true)); refreshGrid(); };
   $('#btnNone').onclick = () => { state.items.forEach((i) => (i.selected = false)); refreshGrid(); };
   $('#btnFrameAll').onclick = frameAll;
@@ -1234,7 +1251,8 @@ async function init() {
   state.shared = { ...DEFAULTS, ...(s.shared || {}) };
   state.out = { ...OUT_DEFAULTS, ...(s.out || {}) };
   state.lastDir = s.lastDir || '';
-  state.recentFrames = (Array.isArray(s.recentFrames) ? s.recentFrames : []).filter((x) => typeof x === 'string').slice(0, RECENT_MAX);
+  state.defaultFrame = await api.defaultFramePath();
+  state.recentFrames = (Array.isArray(s.recentFrames) ? s.recentFrames : []).filter((x) => typeof x === 'string' && !sameFile(x, state.defaultFrame)).slice(0, RECENT_MAX);
   state.ui.framesOpen = !!s.framesOpen;
   applyFramesOpen();
   state.editsStore = await api.getEdits();
