@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Token Framer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <section id="left">
+      <div id="toolbar">
+        <button id="btnImages" title="Pick one or more images">Open Images…</button>
+        <button id="btnFolder" title="Pick a folder; every image without Token/Frame in its name is listed">Open Folder…</button>
+        <span class="sep"></span>
+        <button id="btnFrame">Frame…</button>
+        <span id="frameName" class="muted">no frame</span>
+        <button id="btnSeed" title="Click the preview to click the middle of the frame so Auto center can find it">Pick center point</button>
+        <span class="grow"></span>
+        <label class="check" title="Show the preview without smoothing, so zoomed-in pixels are sharp blocks"><input type="checkbox" id="pixelView"> Pixel view</label>
+      </div>
+      <div id="holeStatus" class="notice" hidden></div>
+      <div id="viewWrap">
+        <div id="view">
+          <canvas id="preview" width="800" height="800"></canvas>
+          <div id="brushRing" hidden></div>
+          <div id="rubber" hidden></div>
+          <span id="zoomBadge" hidden></span>
+        </div>
+        <div id="dropHint">Drop images or a folder here</div>
+      </div>
+      <div id="batchBar" hidden>
+        <span id="batchCount"></span>
+        <button id="btnAll">Select all</button>
+        <button id="btnNone">Select none</button>
+      </div>
+      <div id="grid" hidden></div>
+      <div id="statusBar">
+        <progress id="prog" hidden max="1" value="0"></progress>
+        <span id="status"></span>
+        <button id="btnShow" hidden>Show in folder</button>
+      </div>
+    </section>
+    <aside id="right">
+      <div id="editOnlyRow" hidden>
+        <label class="check"><input type="checkbox" id="editOnly"> Edit this image only</label>
+        <button id="btnResetImg" title="Drop this image's overrides and use the shared settings">Reset image</button>
+      </div>
+      <div id="panel"></div>
+      <div id="actions">
+        <button id="btnSave" class="primary">Save token</button>
+        <button id="btnSaveAs">Save as…</button>
+        <button id="btnFrameAll" class="primary" hidden title="Apply the current settings to every ticked image and save each as '&lt;name&gt; Token.webp'">Save all</button>
+        <button id="btnDefaults" title="Reset every setting to its default">Reset settings</button>
+      </div>
+    </aside>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

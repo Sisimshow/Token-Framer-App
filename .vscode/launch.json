@@ -1,0 +1,15 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Electron: Main",
+			"type": "node",
+			"request": "launch",
+			"cwd": "${workspaceFolder}",
+			"runtimeExecutable": "${workspaceFolder}/node_modules/electron/dist/electron.exe",
+			"args": ["."],
+			"env": { "ELECTRON_RUN_AS_NODE": "" },
+			"console": "integratedTerminal"
+		}
+	]
+}

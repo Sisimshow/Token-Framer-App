@@ -1,0 +1,19 @@
+{
+  "name": "token-framer-app",
+  "version": "0.1.0",
+  "description": "Standalone token framer: composites art with a token frame, single image or whole folder.",
+  "main": "main.cjs",
+  "private": true,
+  "license": "MIT",
+  "author": "Sisimshow",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sisimshow/Token-Framer-App.git"
+  },
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.9.0"
+  }
+}
