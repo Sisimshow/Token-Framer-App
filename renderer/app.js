@@ -322,7 +322,9 @@ function syncControls() {
     c.row.style.display = c.show && !c.show(cfg) ? 'none' : '';
     c.row.classList.toggle('ovr', (c.scope || 'cfg') === 'cfg' && (c.k in ov || (c.k2 && c.k2 in ov)));
   }
-  $('#editOnlyRow').hidden = state.items.length < 2;
+  const multi = state.items.length >= 2; // per-image controls only make sense with several images; Reset settings is always there
+  $('#editOnlyLabel').hidden = !multi;
+  $('#btnResetImg').hidden = !multi;
 }
 
 // ---------------------------------------------------------------- images

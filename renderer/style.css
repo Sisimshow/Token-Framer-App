@@ -74,7 +74,9 @@ body.dragging #dropHint { display: flex; }
 #statusBar { display: flex; gap: 8px; align-items: center; min-height: 24px; color: var(--muted); }
 #prog { width: 200px; }
 
-#editOnlyRow { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+#editOnlyRow { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+#editOnlyRow [hidden] { display: none; }
+.rowbtns { margin-left: auto; display: flex; gap: 6px; }
 #panel { flex: 1; overflow-y: auto; padding: 4px 0; }
 #actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); }
 details { border-bottom: 1px solid var(--line); }

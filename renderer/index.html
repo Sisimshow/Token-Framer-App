@@ -49,9 +49,12 @@
       </div>
     </section>
     <aside id="right">
-      <div id="editOnlyRow" hidden>
-        <label class="check"><input type="checkbox" id="editOnly"> Edit this image only</label>
-        <button id="btnResetImg" title="Drop this image's overrides and use the shared settings">Reset image</button>
+      <div id="editOnlyRow">
+        <label class="check" id="editOnlyLabel" hidden><input type="checkbox" id="editOnly"> Edit this image only</label>
+        <span class="rowbtns">
+          <button id="btnResetImg" hidden title="Drop this image's overrides and use the shared settings">Reset image</button>
+          <button id="btnDefaults" title="Reset every setting to its default">Reset settings</button>
+        </span>
       </div>
       <div id="panel"></div>
       <div id="actions">
@@ -59,7 +62,6 @@
         <button id="btnSaveAs">Save as…</button>
         <button id="btnZip" hidden title="Render every ticked image and save them together as one .zip of '&lt;name&gt; Token.webp' files">Save all as ZIP</button>
         <button id="btnFrameAll" class="primary" hidden title="Apply the current settings to every ticked image and save each as '&lt;name&gt; Token.webp'">Save all</button>
-        <button id="btnDefaults" title="Reset every setting to its default">Reset settings</button>
       </div>
     </aside>
   </div>
