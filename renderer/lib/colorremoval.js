@@ -3,6 +3,7 @@
 // rectangle edits can share the same refinement (grow -> hard removal -> feather -> defringe).
 // threshold/tolerance are raw RGB distance units (0-100ish), feather/grow in pixels, defringe 0-100.
 // A mask is a Uint8Array(w*h) where 1 = remove.
+import { matteToMask, MATTE_RES } from './matte.js';
 
 export function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim());
@@ -137,16 +138,29 @@ export function stampStroke(mask, w, h, pts, r, value) {
  * edits: {type:'wand',x,y,tol,contiguous} | {type:'rect',x0,y0,x1,y1} | {type:'brush',mode,r,pts}
  * Returns {mask, color}; `color` is the reference color for defringe.
  */
-export function buildEditedMask(imageData, cfg, edits = []) {
+export function buildEditedMask(imageData, cfg, edits = [], matte = null) {
   const w = imageData.width;
   const h = imageData.height;
   let color = hexToRgb(cfg.crColor);
   const mask = cfg.crEnabled ? buildColorMask(imageData, color, cfg.crThreshold, cfg.crEdgesOnly) : new Uint8Array(w * h);
   // `fixed` marks pixels last set by hand (1 = erased, 2 = restored): they stay exact, i.e. skip grow/feather/defringe
-  const fixed = edits.some((e) => e.type !== 'wand') ? new Uint8Array(w * h) : null;
+  const fixed = edits.some((e) => e.type !== 'wand' && e.type !== 'ai') ? new Uint8Array(w * h) : null;
   let firstWand = !cfg.crEnabled;
   for (const e of edits) {
-    if (e.type === 'wand') {
+    if (e.type === 'ai') {
+      // RMBG-2.0 matte (1024x1024, see matte.js); parameters come from cfg so they can be tweaked without re-running the model
+      if (!matte) continue;
+      const m = matteToMask(matte, MATTE_RES, MATTE_RES, w, h, { sensitivity: cfg.aiSensitivity ?? 1, blur: cfg.aiBlur ?? 0, offset: cfg.aiOffset ?? -1 });
+      const d = imageData.data;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < m.length; i++) {
+        if (!m[i]) continue;
+        mask[i] = 1;
+        if (fixed) fixed[i] = 0;
+        if (i % 7 === 0) { r += d[i * 4]; g += d[i * 4 + 1]; b += d[i * 4 + 2]; n++; } // sampled mean colour for defringe
+      }
+      if (firstWand && n) { color = { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n) }; firstWand = false; }
+    } else if (e.type === 'wand') {
       const c = addWandToMask(mask, imageData, e.x, e.y, e.tol, e.contiguous, fixed);
       if (firstWand) { color = c; firstWand = false; }
     } else if (e.type === 'rect') {

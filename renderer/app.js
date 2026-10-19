@@ -2,6 +2,7 @@ import { DEFAULTS, compositeImage, resolvePlacement, baseRect } from './lib/comp
 import { buildEditedMask, applyRemovalMask, stampStroke } from './lib/colorremoval.js';
 import { detectHole, holeMaskCanvas } from './lib/holedetect.js';
 import { makeZip } from './lib/zip.js';
+import { MATTE_RES } from './lib/matte.js';
 
 const api = window.api;
 const $ = (s, r = document) => r.querySelector(s);
@@ -123,6 +124,10 @@ const SECTIONS = [
     num('crFeather', 'Feather', 0, 10, 1),
     num('crGrow', 'Grow', 0, 10, 1),
     num('crDefringe', 'Defringe', 0, 100, 1),
+    { t: 'aitool', label: 'AI cutout' },
+    num('aiSensitivity', 'AI sensitivity', 0, 1, 0.01, (c) => hasAi(c)),
+    num('aiBlur', 'AI mask blur', 0, 64, 1, (c) => hasAi(c)),
+    num('aiOffset', 'AI mask offset', -64, 64, 1, (c) => hasAi(c)),
     { t: 'cutouttools', label: 'Manual tools' },
     num('wandTolerance', 'Wand tolerance', 0, 100, 1),
     { k: 'wandContiguous', t: 'check', label: 'Wand contiguous' },
@@ -228,6 +233,12 @@ function buildControl(c, ctl) {
   } else if (c.t === 'hint') {
     ctl.append(el('span', 'hint', c.text));
     c.sync = () => {};
+  } else if (c.t === 'aitool') {
+    ctl.classList.add('wrap');
+    const b = el('button', null, 'AI remove (RMBG-2.0)');
+    b.addEventListener('click', runAi);
+    ctl.append(b, el('span', 'hint', 'Needs a one-time model download'));
+    c.sync = () => { b.disabled = !state.base; };
   } else if (c.t === 'cutouttools') {
     ctl.classList.add('wrap');
     const btn = (id, text, fn) => { const b = el('button', null, text); b.dataset.id = id; b.addEventListener('click', fn); ctl.append(b); return b; };
@@ -318,34 +329,89 @@ function holeCanvasFor(cfg) {
 
 // ---------------------------------------------------------------- cutout (background removal + manual edits)
 const hasCutout = (cfg) => !!cfg.crEnabled || (cfg.popEdits?.length || 0) > 0;
+const hasAi = (cfg) => (cfg.popEdits || []).some((e) => e.type === 'ai');
+
+// AI cutout: the 1024x1024 RMBG-2.0 matte lives on the item (it.matte); main.cjs caches it on disk by input hash,
+// so asking again for a known image is instant and doesn't run the model.
+async function computeMatte(bitmap) {
+  const c = document.createElement('canvas');
+  c.width = c.height = MATTE_RES;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.imageSmoothingQuality = 'high';
+  x.drawImage(bitmap, 0, 0, MATTE_RES, MATTE_RES);
+  const px = x.getImageData(0, 0, MATTE_RES, MATTE_RES).data;
+  const rgb = new Uint8Array(MATTE_RES * MATTE_RES * 3);
+  for (let i = 0, j = 0; i < px.length; i += 4) { rgb[j++] = px[i]; rgb[j++] = px[i + 1]; rgb[j++] = px[i + 2]; }
+  return api.aiMatte(rgb);
+}
+
+/** Make sure an item that carries an AI edit has its matte (restored sessions, Save all, ZIP). */
+async function ensureMatte(it, bitmap) {
+  if (it.matte || !hasAi(it.override)) return;
+  it.matte = await computeMatte(bitmap);
+  it.matteVer = (it.matteVer || 0) + 1;
+}
+
+async function downloadModel() {
+  try {
+    await api.downloadAiModel();
+  } catch (err) {
+    if (!confirm(`The model download failed (${err.message}).\n\nPick a model_fp16.onnx file you already have instead?`)) throw err;
+    if (!(await api.chooseAiModel())) throw new Error('No model file chosen.');
+  } finally {
+    $('#prog').hidden = true;
+  }
+}
+
+async function runAi() {
+  const it = curItem();
+  if (!it || !state.base) return setStatus('Open an image first.', true);
+  try {
+    let st = await api.getAiStatus();
+    if (!st.ready) {
+      if (!confirm(`AI remove needs the RMBG-2.0 model: about ${st.sizeMB} MB, downloaded once from Hugging Face.\nLicence CC BY-NC 4.0 (personal, non-commercial use).\n\nDownload it now?`)) return;
+      await downloadModel();
+    }
+    setStatus('Running RMBG-2.0…');
+    const matte = await computeMatte(state.base.bitmap);
+    if (curItem() !== it) return; // moved to another image meanwhile
+    it.matte = matte;
+    it.matteVer = (it.matteVer || 0) + 1;
+    if (hasAi(it.override)) afterEdit(); else pushEdit({ type: 'ai' });
+    st = await api.getAiStatus();
+    setStatus(`AI cutout done on ${st.provider}. Tweak sensitivity, blur and offset, or fix details with the brush.`);
+  } catch (err) {
+    setStatus(`AI remove failed: ${err.message}`, true);
+  }
+}
 
 /** Full recompute: color mask + ordered edits, then grow/feather/defringe once. */
-function buildCut(bitmap, cfg) {
+function buildCut(bitmap, cfg, matte = null) {
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(bitmap, 0, 0);
   const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const { mask, color, fixed } = buildEditedMask(id, cfg, cfg.popEdits || []);
+  const { mask, color, fixed } = buildEditedMask(id, cfg, cfg.popEdits || [], matte);
   const raw = mask.slice(); // pre-grow copy, patched live while brushing
   applyRemovalMask(id, mask, color, cfg.crFeather, cfg.crGrow, cfg.crDefringe, fixed);
   ctx.putImageData(id, 0, 0);
   return { canvas, ctx, raw, orig: null };
 }
 
-const cutKey = (cfg) => JSON.stringify([state.base?.path, cfg.crEnabled, cfg.crColor, cfg.crThreshold, cfg.crEdgesOnly, cfg.crFeather, cfg.crGrow, cfg.crDefringe, curItem()?.editVer || 0]);
+const cutKey = (cfg) => JSON.stringify([state.base?.path, cfg.crEnabled, cfg.crColor, cfg.crThreshold, cfg.crEdgesOnly, cfg.crFeather, cfg.crGrow, cfg.crDefringe, cfg.aiSensitivity, cfg.aiBlur, cfg.aiOffset, curItem()?.matteVer || 0, curItem()?.editVer || 0]);
 
 function previewCut(cfg) {
   const key = cutKey(cfg);
-  if (state.cut?.key !== key) state.cut = { key, ...buildCut(state.base.bitmap, cfg) };
+  if (state.cut?.key !== key) state.cut = { key, ...buildCut(state.base.bitmap, cfg, curItem()?.matte) };
   return state.cut;
 }
 
 /** {base, popBase} drawables for a config. `cut` is a prebuilt cutout (preview cache) or null to build one. */
-function buildSources(cfg, bitmap, cut = null) {
+function buildSources(cfg, bitmap, cut = null, matte = null) {
   if (!hasCutout(cfg) && !cut) return { base: bitmap, popBase: null };
-  const c = cut || buildCut(bitmap, cfg);
+  const c = cut || buildCut(bitmap, cfg, matte);
   return cfg.crPopOutOnly ? { base: bitmap, popBase: c.canvas } : { base: c.canvas, popBase: c.canvas };
 }
 
@@ -790,6 +856,10 @@ async function selectItem(i) {
     state.cut = null;
     syncControls();
     schedulePreview(0);
+    if (hasAi(it.override) && !it.matte) { // restored from a previous session: rebuild the matte (cached on disk, fast)
+      ensureMatte(it, bitmap).then(() => { if (curItem() === it) { state.cut = null; schedulePreview(0); } })
+        .catch((err) => setStatus(`AI cutout unavailable: ${err.message}`, true));
+    }
   } catch (err) {
     setStatus(`Could not load ${it.name}: ${err.message}`, true);
   }
@@ -870,7 +940,8 @@ async function renderItemBlob(it) {
   try {
     const cfg = { ...state.shared, ...it.override };
     await ensureAssets(cfg);
-    const canvas = compositeFor(cfg, buildSources(cfg, bmp), state.out.size, {});
+    await ensureMatte(it, bmp);
+    const canvas = compositeFor(cfg, buildSources(cfg, bmp, null, it.matte), state.out.size, {});
     return await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), 'image/webp', state.out.quality));
   } finally {
     bmp.close();
@@ -1055,6 +1126,13 @@ function setup() {
   window.addEventListener('keydown', (e) => onKey(e, true));
   window.addEventListener('keyup', (e) => onKey(e, false));
   window.addEventListener('paste', handlePaste);
+  api.onAiProgress(({ got, total }) => {
+    const p = $('#prog');
+    p.hidden = false;
+    p.max = total;
+    p.value = got;
+    setStatus(`Downloading the RMBG-2.0 model: ${Math.round(got / 1e6)} of ${Math.round(total / 1e6)} MB`);
+  });
   let depth = 0;
   window.addEventListener('dragenter', (e) => { e.preventDefault(); depth++; document.body.classList.add('dragging'); });
   window.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; document.body.classList.remove('dragging'); } });
@@ -1076,4 +1154,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, runAi, computeMatte, eff, compositeFor, resolveCfg }); // DevTools / tests

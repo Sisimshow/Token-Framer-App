@@ -278,6 +278,39 @@ async function main() {
     fs.rmSync(zf, { force: true });
   }
 
+  // -- RMBG matte post-processing (same maths as the ComfyUI RMBG node), on synthetic mattes
+  const mt = await app.ev(`(async () => {
+    const { matteToAlpha, MATTE_RES: R } = await import('./lib/matte.js');
+    const sq = new Uint8Array(R * R); for (let y = 256; y < 768; y++) for (let x = 256; x < 768; x++) sq[y * R + x] = 255;
+    const count = (a) => a.reduce((n, v) => n + (v === 255 ? 1 : 0), 0);
+    const id = matteToAlpha(sq, R, R, R, R, {});
+    const shrink = matteToAlpha(sq, R, R, R, R, { offset: -1 });
+    const grow = matteToAlpha(sq, R, R, R, R, { offset: 1 });
+    const sens = matteToAlpha(new Uint8Array(R * R).fill(100), R, R, R, R, { sensitivity: 0.5 });
+    const blur = matteToAlpha(sq, R, R, R, R, { blur: 3 });
+    const half = new Uint8Array(R * R); for (let y = 0; y < R; y++) for (let x = 0; x < R / 2; x++) half[y * R + x] = 255;
+    const ns = matteToAlpha(half, R, R, 400, 300, {});
+    return { same: id.every((v, i) => v === sq[i]), n0: count(id), nShrink: count(shrink), nGrow: count(grow), sens: sens[5000],
+      edge: blur[256 * R + 256], inner: blur[512 * R + 512], nsL: ns[150 * 400 + 20], nsR: ns[150 * 400 + 380], nsSize: ns.length };
+  })()`);
+  check('matte: sensitivity 1 / offset 0 / blur 0 leave the matte untouched', mt.same && mt.n0 === 512 * 512, J(mt));
+  check('matte: offset -1 shrinks a square 1 px per side, +1 grows it', mt.nShrink === 510 * 510 && mt.nGrow === 514 * 514, `${mt.nShrink} / ${mt.nGrow}`);
+  check('matte: sensitivity 0.5 gives gain 1.5 (100 -> 150)', mt.sens === 150, String(mt.sens));
+  check('matte: blur softens the edge but not the interior', mt.edge > 0 && mt.edge < 255 && mt.inner === 255, `${mt.edge} / ${mt.inner}`);
+  check('matte: resize to a non-square image keeps orientation', mt.nsL === 255 && mt.nsR === 0 && mt.nsSize === 400 * 300, `${mt.nsL} / ${mt.nsR} / ${mt.nsSize}`);
+
+  // -- the 'ai' edit turns a matte into the removal mask (matte square covers the middle half of the image)
+  const ai = await app.ev(`(async () => {
+    const { MATTE_RES: R } = await import('./lib/matte.js');
+    const m = new Uint8Array(R * R); for (let y = 256; y < 768; y++) for (let x = 256; x < 768; x++) m[y * R + x] = 255;
+    const c = __tf.buildCut(__tf.base.bitmap, { ...__tf.eff(), crEnabled: false, aiOffset: 0, popEdits: [{ type: 'ai' }] }, m);
+    const a = (x, y) => c.ctx.getImageData(x, y, 1, 1).data[3];
+    const none = __tf.buildCut(__tf.base.bitmap, { ...__tf.eff(), crEnabled: false, popEdits: [{ type: 'ai' }] }, null);
+    return { corners: [a(2, 2), a(397, 297)], centre: a(200, 150), noMatte: none.ctx.getImageData(2, 2, 1, 1).data[3] };
+  })()`);
+  check('ai edit removes outside the matte and keeps the subject', ai.corners[0] === 0 && ai.corners[1] === 0 && ai.centre === 255, J(ai));
+  check('ai edit without a matte is a no-op (model not run yet)', ai.noMatte === 255, J(ai.noMatte));
+
   app.close();
 }
 

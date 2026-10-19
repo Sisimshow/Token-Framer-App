@@ -13,6 +13,11 @@ contextBridge.exposeInMainWorld('api', {
   showInFolder: (p) => ipcRenderer.invoke('shell:show', p),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (data) => ipcRenderer.invoke('settings:set', data),
+  getAiStatus: () => ipcRenderer.invoke('ai:status'),
+  downloadAiModel: () => ipcRenderer.invoke('ai:download'),
+  chooseAiModel: () => ipcRenderer.invoke('ai:chooseModel'),
+  aiMatte: (rgb) => ipcRenderer.invoke('ai:matte', rgb),
+  onAiProgress: (fn) => ipcRenderer.on('ai:progress', (_e, p) => fn(p)),
   getEdits: () => ipcRenderer.invoke('edits:get'),
   setEdits: (data) => ipcRenderer.invoke('edits:set', data),
   pathForFile: (file) => webUtils.getPathForFile(file)

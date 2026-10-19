@@ -21,6 +21,10 @@ Token Framer Foundry module (MIT); the module is a separate project and is not t
 ## Layout
 - `main.cjs`: window, native dialogs, file IPC (`fs:*`), settings JSON in `userData`. `preload.cjs`: the `window.api` bridge.
   `contextIsolation` is on; add new file or OS access as an IPC handler, not by loosening that.
+- AI cutout: `main.cjs` runs RMBG-2.0 (community FP16 ONNX, `yamura4/RMBG-2.0-ONNX`, CC BY-NC 4.0, personal use) through
+  `onnxruntime-node` (DirectML, CPU fallback); model downloads on first use to `userData\models`, mattes are cached in
+  `userData\mattes` by input hash. The ONNX input is fixed at 1024x1024. `renderer/lib/matte.js` holds the sensitivity/blur/offset
+  maths (copied from the ComfyUI RMBG node); the `{type:'ai'}` edit in `colorremoval.js` turns the matte into a removal mask.
 - `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).
 - `renderer/app.js`: UI, state, tools, saving. `renderer/lib/composite.js`: layer compositing and placement.
   `renderer/lib/colorremoval.js`: background removal masks. `renderer/lib/holedetect.js`: frame-opening detection.
@@ -40,6 +44,6 @@ Token Framer Foundry module (MIT); the module is a separate project and is not t
   `<name> Token.webp` unless "Overwrite existing" is on, and writes next to the source.
 
 ## Rules
-- No new npm dependency without asking first (stating the trade-off). AI background removal is planned but deferred for that reason.
+- No new npm dependency without asking first (stating the trade-off). The only runtime dependency is `onnxruntime-node` (approved for AI cutout).
 - After changing compositing or mask code, re-run a parity check against the previous output rather than trusting it looks right.
 - Windows paths with spaces, `&` and smart quotes are normal here; test with them.
