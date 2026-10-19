@@ -24,13 +24,19 @@ Working and used by hand by the author. Features:
 - **Hand edits skip grow/feather/defringe** (`fixed` mask in `colorremoval.js`). Without that, a 1px brush erased 5px.
 - **Cutout is pop-out-only by default** so the art under the frame keeps its background; the checkbox turns that off.
 
-## Deferred: AI background removal
-Agreed to do later, needs the owner's go-ahead on the dependency first (the author's rule: no new dependency without asking).
-Sketch: `onnxruntime-node` in `main.cjs` (official package, Electron 28+, about 218 MB unpacked, DirectML on Windows x64), model
-downloaded on first use to `userData\models`, IPC `ai:matte` (image bytes in, matte out), and an "AI remove" button whose matte
-becomes one more op feeding the same mask so feather/grow/undo/brush all still work. Owner said use is **personal tabletop only**,
-so BRIA's RMBG-1.4 / 2.0 (non-commercial licenses) are acceptable; BiRefNet ONNX exports are MIT but large. Model file sizes and
-inference speed were not verified. Re-check the licenses before shipping anything commercial.
+## AI background removal (RMBG-2.0)
+Done. "AI remove (RMBG-2.0)" in the Background removal section. `main.cjs` runs the community FP16 ONNX export of RMBG-2.0
+(`yamura4/RMBG-2.0-ONNX`, 512,588,696 bytes, public, **CC BY-NC 4.0: personal use only; re-check before anything commercial**) through
+`onnxruntime-node` (approved dependency, about 290 MB in node_modules; DirectML with CPU fallback). The model downloads on first
+use to `userData\models` (or pick an existing file if the download fails). The result is a `{type:'ai'}` entry in `popEdits`, so
+feather/grow/defringe, brush/wand, undo and per-image persistence all work. Sensitivity (1), blur (0) and offset (-1) follow the
+author's SwarmUI RMBG workflow and the maths in `renderer/lib/matte.js` matches the ComfyUI node.
+- The ONNX input is **fixed at 1024x1024** (the workflow's 2048 process_res is not possible). Output is already 0..1.
+- Measured: about 1.2 s per image on DirectML (about 4.8 GB RAM), about 12.6 s on CPU (about 13 GB RAM); first run in the app about 6-8 s
+  including model load. Mattes are cached in `userData\mattes` by input hash (1 MB each, never pruned); repeat lookups take about 30 ms.
+- Verified end to end under Electron on two real images; unit checks for the matte maths are in `tools/test.mjs`. No automated check
+  runs the real model (it would need the 490 MB file).
+- Not done: soft (partial) alpha (the matte is thresholded at 50 %, then the usual feather/grow apply), refine_foreground, "AI remove all" for a whole folder.
 
 ## Known limits and rough edges
 - Per-image overrides and manual edits are saved to `edits.json` in userData, keyed by source path (popEdits are dropped if the image size changed). Undo history is not saved, and an edit made under 0.5 s before closing the window can be lost.
@@ -50,4 +56,4 @@ background pocket, a small square) and the default frame:
 A worthwhile next step is committing a small version of that harness as `tools/` plus a parity fixture.
 
 ## Ideas not started
-Persist edits per file, recursive folder scan, per-image frame choice, packaging (electron-builder), committed regression tests.
+Recursive folder scan, per-image frame choice, packaging (electron-builder; note onnxruntime-node's native files), AI remove for a whole folder, saved user defaults.
