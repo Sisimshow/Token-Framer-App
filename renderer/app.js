@@ -252,7 +252,7 @@ function buildControl(c, ctl) {
     c.sync = () => {};
   } else if (c.t === 'autocenter') {
     // [x Auto center] [Pick center point]: the button stays available even when detection failed (the checkbox only shows once a hole is found)
-    const pick = el('button', null, 'Pick center point');
+    const pick = el('button', 'push', 'Pick center point');
     pick.title = 'Click the middle of the frame in the preview so Auto center can find it';
     pick.addEventListener('click', toggleSeedPick);
     const wrap = el('label', 'check');
