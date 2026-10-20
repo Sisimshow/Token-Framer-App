@@ -36,17 +36,17 @@
         </div>
         <div id="dropHint">Drop images or a folder here</div>
       </div>
+      <div id="statusBar">
+        <progress id="prog" hidden max="1" value="0"></progress>
+        <span id="status"></span>
+        <button id="btnShow" hidden>Show in folder</button>
+      </div>
       <div id="batchBar" hidden>
         <span id="batchCount"></span>
         <button id="btnAll">Select all</button>
         <button id="btnNone">Select none</button>
       </div>
       <div id="grid" hidden></div>
-      <div id="statusBar">
-        <progress id="prog" hidden max="1" value="0"></progress>
-        <span id="status"></span>
-        <button id="btnShow" hidden>Show in folder</button>
-      </div>
     </section>
     <aside id="right">
       <div id="editOnlyRow">
@@ -60,8 +60,8 @@
       <div id="actions">
         <button id="btnSave" class="primary">Save token</button>
         <button id="btnSaveAs">Save as…</button>
-        <button id="btnZip" hidden title="Render every ticked image and save them together as one .zip of '&lt;name&gt; Token.webp' files">Save all as ZIP</button>
         <button id="btnFrameAll" class="primary" hidden title="Apply the current settings to every ticked image and save each as '&lt;name&gt; Token.webp'">Save all</button>
+        <button id="btnZip" hidden title="Render every ticked image and save them together as one .zip of '&lt;name&gt; Token.webp' files">Save all as ZIP</button>
       </div>
     </aside>
   </div>

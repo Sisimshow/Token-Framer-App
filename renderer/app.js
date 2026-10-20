@@ -74,7 +74,7 @@ const offs = (p, label, show, r = 256) => [
 ];
 
 const SECTIONS = [
-  { title: 'Art placement', open: true, controls: [
+  { title: 'Image', open: true, controls: [
     { k: 'fitEnabled', t: 'autocenter', label: '' },
     { k: 'fitAnchor', t: 'select', label: 'Vertical anchor', show: fit, opts: [['top', 'Top (keeps faces)'], ['center', 'Center']] },
     num('fitScale', 'Scale ×', 0.5, 2, 0.01, fit),
@@ -98,12 +98,6 @@ const SECTIONS = [
     num('frameOpacity', 'Opacity', 0, 1, 0.01),
     { k: 'frameTintOn', k2: 'frameTintColor', t: 'tint', label: 'Tint' }
   ] },
-  { title: 'Background', controls: [
-    { k: 'bgEnabled', k2: 'bgColor', t: 'tint', label: 'Color' },
-    { k: 'bgImage', t: 'file', label: 'Image' },
-    num('bgImageScale', 'Image scale', 0.5, 1.5, 0.01),
-    ...offs('bgImageOffset', 'Image offset')
-  ] },
   { title: 'Overlay', controls: [
     { k: 'overlayImage', t: 'file', label: 'Image' },
     num('overlayScale', 'Scale', 0.5, 1.5, 0.01),
@@ -111,12 +105,11 @@ const SECTIONS = [
     num('overlayOpacity', 'Opacity', 0, 1, 0.01),
     { k: 'overlayTintOn', k2: 'overlayTintColor', t: 'tint', label: 'Tint' }
   ] },
-  { title: 'Pop-out', controls: [
-    { k: 'popOutEnabled', t: 'check', label: 'Enable' },
-    num('popOutDegrees', 'Arc (°)', 1, 360, 1),
-    num('popOutRotation', 'Rotation (°)', -180, 180, 1),
-    ...offs('popOutOffset', 'Center'),
-    { k: 'popOutPreview', t: 'check', label: 'Highlight', scope: 'ui' }
+  { title: 'Background', controls: [
+    { k: 'bgEnabled', k2: 'bgColor', t: 'tint', label: 'Color' },
+    { k: 'bgImage', t: 'file', label: 'Image' },
+    num('bgImageScale', 'Image scale', 0.5, 1.5, 0.01),
+    ...offs('bgImageOffset', 'Image offset')
   ] },
   { title: 'Background removal', controls: [
     { k: 'crPopOutOnly', t: 'check', label: 'Pop-out layer only' },
@@ -141,6 +134,13 @@ const SECTIONS = [
     { k: 'wandContiguous', t: 'check', label: 'Wand contiguous', show: () => state.tool === 'wand' },
     num('brushSize', 'Brush (image px)', 1, 600, 1, () => state.tool === 'brush'),
     { k: 'brushMode', t: 'select', label: 'Brush mode', opts: [['erase', 'Erase'], ['restore', 'Restore']], show: () => state.tool === 'brush' }
+  ] },
+  { title: 'Pop-out', controls: [
+    { k: 'popOutEnabled', t: 'check', label: 'Enable' },
+    num('popOutDegrees', 'Arc (°)', 1, 360, 1),
+    num('popOutRotation', 'Rotation (°)', -180, 180, 1),
+    ...offs('popOutOffset', 'Center'),
+    { k: 'popOutPreview', t: 'check', label: 'Highlight', scope: 'ui' }
   ] },
   { title: 'Output', scope: 'out', controls: [
     { k: 'size', t: 'num', label: 'Size (px)', min: 128, max: 4096 },
@@ -293,11 +293,18 @@ function buildControl(c, ctl) {
   }
 }
 
+// Background-removal settings that belong to one image: changing them with several images loaded switches on "Edit this image only"
+// (colour-removal keys and the tool settings stay shared / unaffected).
+const PER_IMAGE_KEYS = new Set(['crPopOutOnly', 'aiSensitivity', 'aiBlur', 'aiOffset', 'crFeather', 'crGrow', 'crDefringe']);
+
 function setKey(c, k, v) {
   const scope = c.scope || 'cfg';
   if (scope === 'out') state.out[k] = v;
   else if (scope === 'ui') state.ui[k] = v;
-  else if (state.editOnly && curItem()) curItem().override[k] = v;
+  else if ((state.editOnly || (PER_IMAGE_KEYS.has(k) && state.items.length >= 2)) && curItem()) {
+    curItem().override[k] = v;
+    state.editOnly = true;
+  }
   else {
     state.shared[k] = v;
     if (curItem()) delete curItem().override[k];
@@ -324,6 +331,7 @@ function syncControls() {
   }
   const multi = state.items.length >= 2; // per-image controls only make sense with several images; Reset settings is always there
   $('#editOnlyLabel').hidden = !multi;
+  $('#editOnly').checked = state.editOnly;
   $('#btnResetImg').hidden = !multi;
 }
 
@@ -611,6 +619,7 @@ function pushEdit(op) {
   const it = curItem();
   if (!it) return;
   it.override.popEdits = [...(it.override.popEdits || []), op];
+  state.editOnly = true; // cutout edits belong to this image
   it.redo = [];
   afterEdit();
 }
@@ -953,6 +962,7 @@ async function openImages(paths) {
 async function selectItem(i) {
   state.cur = i;
   const it = curItem();
+  state.editOnly = !!it && Object.keys(it.override).length > 0; // follows the image: on for one that already has its own settings
   document.querySelectorAll('.tile').forEach((t, n) => t.classList.toggle('cur', n === i));
   syncControls();
   if (!it) return;
@@ -1218,11 +1228,16 @@ function setup() {
   $('#btnSaveAs').onclick = () => saveCurrent(true);
   $('#btnShow').onclick = () => state.lastOut && api.showInFolder(state.lastOut);
   $('#editOnly').onchange = (e) => { state.editOnly = e.target.checked; };
-  $('#btnResetImg').onclick = () => { const it = curItem(); if (it) { it.override = {}; it.redo = []; it.editVer++; state.cut = null; syncControls(); schedulePreview(0); updateTile(state.cur); persistEdits(); } };
+  $('#btnResetImg').onclick = () => { const it = curItem(); if (it) { it.override = {}; state.editOnly = false; it.redo = []; it.editVer++; state.cut = null; syncControls(); schedulePreview(0); updateTile(state.cur); persistEdits(); } };
   $('#btnDefaults').onclick = () => {
-    if (!confirm('Reset all shared settings to their defaults?')) return;
+    if (!confirm(state.items.length < 2 ? 'Reset all settings to their defaults?' : 'Reset all shared settings to their defaults? (Per-image settings are kept; use Reset image for those.)')) return;
     state.shared = { ...DEFAULTS };
     state.out = { ...OUT_DEFAULTS };
+    const it = curItem();
+    if (it && state.items.length < 2) { // a lone image has no "other images", so its own overrides and cutout edits go too
+      it.override = {}; state.editOnly = false; it.redo = []; it.editVer++; state.cut = null;
+      updateTile(state.cur); persistEdits();
+    }
     syncControls(); schedulePreview(0); persist();
   };
   $('#pixelView').onchange = (e) => {
