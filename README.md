@@ -13,12 +13,12 @@ Personal-use project, largely AI-written.
 ## Use
 - **Frame…** picks the frame. Opening a folder auto-loads a `Frame*` image found in it.
 - **Open Images…** / drag files in: frame just those. **Open Folder…** / drag a folder in: lists every image
-  (non-recursive) whose name has no "Token"/"Frame"; `X Token.webp` already present = unchecked unless "Overwrite existing".
+  (non-recursive) whose name has no "Token"/"Frame"; `X Token.webp` (or `.png`, per Output > Format) already present = unchecked unless "Overwrite existing".
 - Click a thumbnail to preview it. Tick **Edit this image only** to store changes for that image alone (purple dot);
   otherwise changes are shared by the whole batch.
   The box follows the image, and it switches on by itself when you change the cutout settings (AI, feather/grow/defringe, edits)
   or any pop-out setting (enable, arc, rotation, center), since those belong to one image.
-- **Save all** (appears with 2+ images) writes `<name> Token.webp` next to each source. **Save token** / **Save as…** do the current image.
+- **Save all** (appears with 2+ images) writes `<name> Token.webp` (or `.png`, see Output > Format) next to each source. **Save token** / **Save as…** do the current image.
 - Auto center needs a closed frame with a transparent middle; if it can't find it, use **Pick center point**.
 - **Background removal** (for pop-out tokens). With **Pop-out layer only** on (default), the cutout only affects the
   pop-out layer above the frame; the art under the frame stays intact. Untick it to cut out both layers.

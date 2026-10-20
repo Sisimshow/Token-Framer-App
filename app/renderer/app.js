@@ -9,7 +9,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const PREVIEW = 800;
 const IMG_EXT = /\.(webp|png|jpe?g|bmp|gif|tiff?|avif)$/i;
 const RECENT_MAX = 24;
-const OUT_DEFAULTS = { size: 1000, quality: 0.95, overwrite: false };
+const OUT_DEFAULTS = { size: 1000, quality: 1, overwrite: false, format: 'webp' };
 
 const state = {
   shared: { ...DEFAULTS },
@@ -144,7 +144,8 @@ const SECTIONS = [
   ] },
   { title: 'Output', scope: 'out', controls: [
     { k: 'size', t: 'num', label: 'Size (px)', min: 128, max: 4096 },
-    num('quality', 'WebP quality', 0.5, 1, 0.01),
+    { k: 'format', t: 'select', label: 'Format', opts: [['webp', 'WebP'], ['png', 'PNG']] },
+    num('quality', 'WebP quality', 0.5, 1, 0.01, () => state.out.format !== 'png'),
     { k: 'overwrite', t: 'check', label: 'Overwrite existing' }
   ] }
 ];
@@ -300,18 +301,25 @@ function buildControl(c, ctl) {
 // (colour-removal keys and the tool settings stay shared / unaffected).
 const PER_IMAGE_KEYS = new Set(['popOutEnabled', 'popOutDegrees', 'popOutRotation', 'popOutOffsetX', 'popOutOffsetY', 'crPopOutOnly', 'aiSensitivity', 'aiBlur', 'aiOffset', 'crFeather', 'crGrow', 'crDefringe']);
 
+/** Switch "Edit this image only" on because a per-image setting changed, and say so (only matters with several images). */
+function enableEditOnly(what) {
+  if (!state.editOnly && state.items.length >= 2) setStatus(`"Edit this image only" turned on for ${curItem().base}: its ${what} are now its own. Untick the box to change all images instead.`);
+  state.editOnly = true;
+}
+
 function setKey(c, k, v) {
   const scope = c.scope || 'cfg';
   if (scope === 'out') state.out[k] = v;
   else if (scope === 'ui') state.ui[k] = v;
   else if ((state.editOnly || (PER_IMAGE_KEYS.has(k) && state.items.length >= 2)) && curItem()) {
     curItem().override[k] = v;
-    state.editOnly = true;
+    enableEditOnly(k.startsWith('popOut') ? 'pop-out settings' : 'cutout settings');
   }
   else {
     state.shared[k] = v;
     if (curItem()) delete curItem().override[k];
   }
+  if (k === 'format') refreshOutPaths();
   if (k === 'overwrite') {
     for (const it of state.items) if (it.exists) it.selected = v;
     refreshGrid();
@@ -622,7 +630,7 @@ function pushEdit(op) {
   const it = curItem();
   if (!it) return;
   it.override.popEdits = [...(it.override.popEdits || []), op];
-  state.editOnly = true; // cutout edits belong to this image
+  enableEditOnly('cutout edits'); // they belong to this image
   it.redo = [];
   afterEdit();
 }
@@ -915,10 +923,26 @@ function pickSeedAt(e) {
 }
 
 // ---------------------------------------------------------------- items
+const fmtExt = () => (state.out.format === 'png' ? 'png' : 'webp');
+const withExt = (p) => p.replace(/\.(webp|png)$/i, `.${fmtExt()}`);
+
+/** The output format changed: re-point every item at the new file name and re-check which tokens already exist. */
+async function refreshOutPaths() {
+  const items = state.items;
+  for (const it of items) {
+    it.outPath = withExt(it.outPath);
+    it.exists = it.path ? await api.exists(it.outPath) : false;
+    it.selected = !it.exists || state.out.overwrite;
+  }
+  if (state.items !== items) return; // a different set of images was opened meanwhile
+  refreshGrid();
+  updateBatchBar();
+}
+
 function mkItem(f, names) {
   const dir = dirOf(f.path);
-  const outPath = `${dir}${sepOf(f.path)}${f.base} Token.webp`;
-  const exists = names ? names.has(`${f.base} token.webp`.toLowerCase()) : false;
+  const outPath = `${dir}${sepOf(f.path)}${f.base} Token.${fmtExt()}`;
+  const exists = names ? names.has(`${f.base} token.${fmtExt()}`.toLowerCase()) : false;
   const saved = state.editsStore[editKey(f.path)];
   return { name: f.name, base: f.base, path: f.path, outPath, exists, selected: !exists || state.out.overwrite, override: saved ? structuredClone(saved.override) : {}, dims: saved?.w ? { w: saved.w, h: saved.h } : null, redo: [], editVer: 0, tag: '', thumb: null };
 }
@@ -1080,7 +1104,7 @@ async function renderItemBlob(it) {
     await ensureAssets(cfg);
     await ensureMatte(it, bmp);
     const canvas = compositeFor(cfg, buildSources(cfg, bmp, null, it.matte), state.out.size, {});
-    return await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), 'image/webp', state.out.quality));
+    return await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), `image/${fmtExt()}`, state.out.quality));
   } finally {
     bmp.close();
   }
@@ -1106,9 +1130,9 @@ async function saveCurrent(asNew) {
   if (!it || !needFrame()) return;
   let out = it.outPath;
   if (asNew || !it.path) { // a pasted image has no home folder yet
-    out = await api.pickSave(it.outPath);
+    out = await api.pickSave(it.outPath, fmtExt());
     if (!out) return;
-  } else if (it.exists && !state.out.overwrite && !confirm(`${it.base} Token.webp already exists. Overwrite it?`)) return;
+  } else if (it.exists && !state.out.overwrite && !confirm(`${it.base} Token.${fmtExt()} already exists. Overwrite it?`)) return;
   try {
     setStatus(`Saving ${baseOf(out)}…`);
     await writeItem(it, out);
@@ -1170,8 +1194,8 @@ async function zipAll() {
     setStatus(`Rendering ${n + 1}/${todo.length}: ${it.base}`);
     try {
       const blob = await renderItemBlob(it);
-      let name = `${it.base} Token.webp`;
-      for (let k = 2; used.has(name.toLowerCase()); k++) name = `${it.base} Token (${k}).webp`;
+      let name = `${it.base} Token.${fmtExt()}`;
+      for (let k = 2; used.has(name.toLowerCase()); k++) name = `${it.base} Token (${k}).${fmtExt()}`;
       used.add(name.toLowerCase());
       files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
     } catch (err) {
@@ -1209,7 +1233,7 @@ async function handlePaste(e) {
   const base = 'Pasted image';
   const dir = state.lastDir || '';
   const it = {
-    name: base, base, path: '', bytes, outPath: dir ? `${dir}${sepOf(dir)}${base} Token.webp` : `${base} Token.webp`,
+    name: base, base, path: '', bytes, outPath: dir ? `${dir}${sepOf(dir)}${base} Token.${fmtExt()}` : `${base} Token.${fmtExt()}`,
     exists: false, selected: true, override: {}, redo: [], editVer: 0, tag: '', thumb: null
   };
   await setItems([it]);
@@ -1280,6 +1304,7 @@ async function init() {
   const s = await api.getSettings();
   state.shared = { ...DEFAULTS, ...(s.shared || {}) };
   state.out = { ...OUT_DEFAULTS, ...(s.out || {}) };
+  if (state.out.quality === 0.95) state.out.quality = 1; // the old default; 100% is the default now
   state.lastDir = s.lastDir || '';
   state.defaultFrame = await api.defaultFramePath();
   state.recentFrames = (Array.isArray(s.recentFrames) ? s.recentFrames : []).filter((x) => typeof x === 'string' && !sameFile(x, state.defaultFrame)).slice(0, RECENT_MAX);

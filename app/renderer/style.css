@@ -75,7 +75,7 @@ body.dragging #dropHint { display: flex; }
 .tile .ovrdot { position: absolute; right: 6px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--ovr); }
 
 #statusBar { display: flex; gap: 8px; align-items: center; min-height: 20px; color: var(--muted); }
-#statusBar:has(#status:empty):has(#prog[hidden]):has(#btnShow[hidden]) { display: none; }
+#status:empty::before { content: 'Ready'; opacity: .6; }
 #prog { width: 200px; }
 
 #editOnlyRow { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }

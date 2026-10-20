@@ -6,7 +6,7 @@ Token Framer Foundry module (MIT); the module is a separate project and is not t
 
 ## Run and test
 The repo root holds only the launcher `.bat`, README, the VS Code workspace and `.claude`; everything else lives in `app/`
-(source, `package.json`, `node_modules`, `tools`, `HANDOFF.md`, `LICENSE`). Run npm/node commands from `app/`; paths below are relative to it.
+(source, `package.json`, `node_modules`, `tools`, `LICENSE`). Run npm/node commands from `app/`; paths below are relative to it.
 - `npm install` once (if `node_modules\electron\dist` is missing afterwards: `node node_modules\electron\install.js`).
 - Launch: `Token Framer App.bat`, `npm start`, or the "Electron: Main" launch config in VS Code.
 - **Gotcha:** if `ELECTRON_RUN_AS_NODE` is set in the shell, Electron runs as plain Node and `app` is undefined. Unset it
@@ -45,7 +45,7 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
 - The cutout only affects the pop-out layer unless `crPopOutOnly` is off. Preview and export share `buildSources` / `compositeFor`,
   so they cannot drift.
 - Folder mode skips files with "token" or "frame" in the name (case-insensitive substring), never overwrites an existing
-  `<name> Token.webp` unless "Overwrite existing" is on, and writes next to the source.
+  `<name> Token.<ext>` (webp by default, png optional) unless "Overwrite existing" is on, and writes next to the source.
 
 ## Rules
 - No new npm dependency without asking first (stating the trade-off). The only runtime dependency is `onnxruntime-node` (approved for AI cutout).

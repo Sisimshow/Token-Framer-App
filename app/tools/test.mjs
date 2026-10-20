@@ -174,6 +174,20 @@ async function main() {
     let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return { w: bm.width, mean: s / a.length }; })()`);
   check('export matches preview compositing (webp q95)', exp.w === SIZE && exp.mean < 2, `mean ${exp.mean.toFixed(3)}/255`);
 
+  // -- PNG output: the Format select re-points the item, the saved file is a real PNG, switching back restores webp
+  const fmtSet = (v) => app.ev(`(async () => { const sel = [...document.querySelectorAll('#panel select')].find((x) => [...x.options].some((o) => o.value === 'png')); sel.value = ${J(v)}; sel.dispatchEvent(new Event('change')); await new Promise((r) => setTimeout(r, 300)); return { out: __tf.items[__tf.cur].outPath, exists: __tf.items[__tf.cur].exists }; })()`);
+  const dq = await app.ev('({ format: __tf.out.format, quality: __tf.out.quality, status: getComputedStyle(document.querySelector("#status"), "::before").content })');
+  check('defaults: WebP format, quality 100%', dq.format === 'webp' && dq.quality === 1, J(dq));
+  const toPng = await fmtSet('png');
+  check('format PNG: output name switches to .png and existence is re-checked', toPng.out.endsWith('Test Knight Token.png') && toPng.exists === false, J(toPng));
+  await app.ev('__tf.saveCurrent(false)');
+  const pngPath = path.join(work, 'Test Knight Token.png');
+  const magic = fs.existsSync(pngPath) ? fs.readFileSync(pngPath).subarray(0, 4).toString('hex') : '';
+  check('Save token wrote a real PNG', magic === '89504e47', magic);
+  const toWebp = await fmtSet('webp');
+  check('format back to WebP: .webp name, existing token detected', toWebp.out.endsWith('Test Knight Token.webp') && toWebp.exists === true, J(toWebp));
+  fs.rmSync(pngPath, { force: true });
+
   // -- cutout behaviour (pocket at the donut's centre)
   const wandC = await H(`(() => { const c = h.cut({ crEnabled: false, popEdits: [{ type: 'wand', x: 5, y: 5, tol: 20, contiguous: true }] }); return [h.alphaAt(c, 5, 5), h.alphaAt(c, 200, 150), h.alphaAt(c, 200, 70)]; })()`);
   check('wand (contiguous) removes the outside and keeps the enclosed pocket', wandC[0] === 0 && wandC[1] === 255 && wandC[2] === 255, J(wandC));
