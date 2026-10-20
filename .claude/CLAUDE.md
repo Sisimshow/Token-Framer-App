@@ -44,6 +44,15 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   grow/feather/defringe so single-pixel edits stay exact.
 - The cutout only affects the pop-out layer unless `crPopOutOnly` is off. Preview and export share `buildSources` / `compositeFor`,
   so they cannot drift.
+- "Edit this image only" (`state.editOnly`) follows the selected image: on when it has any `override`, off otherwise. With 2+ images, changing a
+  key in `PER_IMAGE_KEYS` (pop-out enable/arc/rotation/center, AI sensitivity/blur/offset, feather/grow/defringe, Pop-out layer only) or pushing a cutout
+  edit writes to the image's override and switches the box on, with a status message (`enableEditOnly`). Colour-removal keys and tool settings stay shared.
+  Reset settings also clears a lone image's override; Reset image clears one image's.
+- Output: Format (WebP default, PNG) re-points every item's `outPath` and re-checks existence (`refreshOutPaths`). The WebP quality slider's 100% is sent
+  to the encoder as 0.99 (best lossy, like Photoshop); the Lossless box sends a real 1.0, which Chromium encodes as lossless WebP. A saved 0.95 (the old
+  default) is upgraded to 1 on load.
+- Window bounds live in `window.json` (main process, ignored if off-screen); panel section open/closed state is in `settings.json` (`sections`).
+- Shortcuts: W/B/R tools, Left/Right image, Ctrl+S save, Ctrl+Z/Y undo/redo, Esc leaves a tool. The status line under the preview is always shown ("Ready" placeholder).
 - Folder mode skips files with "token" or "frame" in the name (case-insensitive substring), never overwrites an existing
   `<name> Token.<ext>` (webp by default, png optional) unless "Overwrite existing" is on, and writes next to the source.
 
