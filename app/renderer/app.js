@@ -9,7 +9,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const PREVIEW = 800;
 const IMG_EXT = /\.(webp|png|jpe?g|bmp|gif|tiff?|avif)$/i;
 const RECENT_MAX = 24;
-const OUT_DEFAULTS = { size: 1000, quality: 1, overwrite: false, format: 'webp' };
+const OUT_DEFAULTS = { size: 1000, quality: 1, overwrite: false, format: 'webp', lossless: false };
 
 const state = {
   shared: { ...DEFAULTS },
@@ -145,7 +145,8 @@ const SECTIONS = [
   { title: 'Output', scope: 'out', controls: [
     { k: 'size', t: 'num', label: 'Size (px)', min: 128, max: 4096 },
     { k: 'format', t: 'select', label: 'Format', opts: [['webp', 'WebP'], ['png', 'PNG']] },
-    num('quality', 'WebP quality', 0.5, 1, 0.01, () => state.out.format !== 'png'),
+    num('quality', 'WebP quality', 0.5, 1, 0.01, () => state.out.format !== 'png' && !state.out.lossless),
+    { k: 'lossless', t: 'check', label: 'Lossless', show: () => state.out.format !== 'png' },
     { k: 'overwrite', t: 'check', label: 'Overwrite existing' }
   ] }
 ];
@@ -924,6 +925,8 @@ function pickSeedAt(e) {
 
 // ---------------------------------------------------------------- items
 const fmtExt = () => (state.out.format === 'png' ? 'png' : 'webp');
+// Like Photoshop, the slider's 100% is the best *lossy* setting (encoded as 99%); Chromium turns a real 1.0 into lossless WebP, which is the Lossless box.
+const encodeQuality = () => (state.out.lossless ? 1 : Math.min(state.out.quality, 0.99));
 const withExt = (p) => p.replace(/\.(webp|png)$/i, `.${fmtExt()}`);
 
 /** The output format changed: re-point every item at the new file name and re-check which tokens already exist. */
@@ -1104,7 +1107,7 @@ async function renderItemBlob(it) {
     await ensureAssets(cfg);
     await ensureMatte(it, bmp);
     const canvas = compositeFor(cfg, buildSources(cfg, bmp, null, it.matte), state.out.size, {});
-    return await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), `image/${fmtExt()}`, state.out.quality));
+    return await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), `image/${fmtExt()}`, encodeQuality()));
   } finally {
     bmp.close();
   }
@@ -1321,4 +1324,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, eff, compositeFor, resolveCfg }); // DevTools / tests

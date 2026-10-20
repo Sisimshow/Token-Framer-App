@@ -178,6 +178,9 @@ async function main() {
   const fmtSet = (v) => app.ev(`(async () => { const sel = [...document.querySelectorAll('#panel select')].find((x) => [...x.options].some((o) => o.value === 'png')); sel.value = ${J(v)}; sel.dispatchEvent(new Event('change')); await new Promise((r) => setTimeout(r, 300)); return { out: __tf.items[__tf.cur].outPath, exists: __tf.items[__tf.cur].exists }; })()`);
   const dq = await app.ev('({ format: __tf.out.format, quality: __tf.out.quality, status: getComputedStyle(document.querySelector("#status"), "::before").content })');
   check('defaults: WebP format, quality 100%', dq.format === 'webp' && dq.quality === 1, J(dq));
+  const sizes = await app.ev(`(async () => { const it = __tf.items[__tf.cur]; const q = __tf.out.quality; __tf.out.quality = 1; __tf.out.lossless = false;
+    const lossy = (await __tf.renderItemBlob(it)).size; __tf.out.lossless = true; const lossless = (await __tf.renderItemBlob(it)).size; __tf.out.lossless = false; return { q, lossy, lossless }; })()`);
+  check('quality 100% is lossy (99%), Lossless box gives the larger lossless file', sizes.q === 1 && sizes.lossy > 0 && sizes.lossless > sizes.lossy * 1.2, J(sizes));
   const toPng = await fmtSet('png');
   check('format PNG: output name switches to .png and existence is re-checked', toPng.out.endsWith('Test Knight Token.png') && toPng.exists === false, J(toPng));
   await app.ev('__tf.saveCurrent(false)');

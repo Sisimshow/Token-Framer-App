@@ -30,6 +30,7 @@ Personal-use project, largely AI-written.
   - **Show cutout only** previews the cutout alone, since with Pop-out layer only the effect is hard to see.
   - Manual edits belong to one image and are not saved between sessions, so **Save all** applies each image's own edits
     and uses color removal for everything else.
+- **Output > WebP quality:** 100% is the best lossy setting (sent to the encoder as 99%, like Photoshop's 100). Tick **Lossless** for a true lossless WebP, which is much larger.
 - Settings persist in the Electron user-data folder. F12 opens DevTools.
 
 ## License
