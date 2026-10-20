@@ -6,11 +6,11 @@
 	],
 	"settings": {
 		"files.exclude": {
-			"node_modules": true
+			"app/node_modules": true
 		},
 		"search.exclude": {
-			"node_modules": true,
-			"package-lock.json": true
+			"app/node_modules": true,
+			"app/package-lock.json": true
 		}
 	}
 }

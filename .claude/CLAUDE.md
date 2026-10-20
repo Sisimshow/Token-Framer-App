@@ -5,6 +5,8 @@ manual cutout tools for pop-out tokens. No Foundry VTT dependency. Compositing l
 Token Framer Foundry module (MIT); the module is a separate project and is not touched from here.
 
 ## Run and test
+The repo root holds only the launcher `.bat`, README, the VS Code workspace and `.claude`; everything else lives in `app/`
+(source, `package.json`, `node_modules`, `tools`, `HANDOFF.md`, `LICENSE`). Run npm/node commands from `app/`; paths below are relative to it.
 - `npm install` once (if `node_modules\electron\dist` is missing afterwards: `node node_modules\electron\install.js`).
 - Launch: `Token Framer App.bat`, `npm start`, or the "Electron: Main" launch config in VS Code.
 - **Gotcha:** if `ELECTRON_RUN_AS_NODE` is set in the shell, Electron runs as plain Node and `app` is undefined. Unset it

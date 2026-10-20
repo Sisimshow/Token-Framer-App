@@ -7,7 +7,7 @@ centering on the frame's opening and manual cutout tools for pop-out tokens. The
 Personal-use project, largely AI-written.
 
 ## Run
-1. `npm install` once in this folder. If `node_modules\electron\dist` is missing afterwards, run `node node_modules\electron\install.js`.
+1. `npm install` once in the `app` folder. If `node_modules\electron\dist` is missing afterwards, run `node node_modules\electron\install.js` (also from `app`).
 2. Double-click `Token Framer App.bat`.
 
 ## Use
@@ -33,4 +33,4 @@ Personal-use project, largely AI-written.
 - Settings persist in the Electron user-data folder. F12 opens DevTools.
 
 ## License
-MIT, see LICENSE.
+MIT, see `app/LICENSE`.
