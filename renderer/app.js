@@ -293,9 +293,9 @@ function buildControl(c, ctl) {
   }
 }
 
-// Background-removal settings that belong to one image: changing them with several images loaded switches on "Edit this image only"
+// Background-removal and pop-out settings that belong to one image: changing them with several images loaded switches on "Edit this image only"
 // (colour-removal keys and the tool settings stay shared / unaffected).
-const PER_IMAGE_KEYS = new Set(['crPopOutOnly', 'aiSensitivity', 'aiBlur', 'aiOffset', 'crFeather', 'crGrow', 'crDefringe']);
+const PER_IMAGE_KEYS = new Set(['popOutEnabled', 'popOutDegrees', 'popOutRotation', 'popOutOffsetX', 'popOutOffsetY', 'crPopOutOnly', 'aiSensitivity', 'aiBlur', 'aiOffset', 'crFeather', 'crGrow', 'crDefringe']);
 
 function setKey(c, k, v) {
   const scope = c.scope || 'cfg';
