@@ -350,10 +350,13 @@ async function main() {
   // persists across a restart: put two real frames back on top, then relaunch
   await app.ev(`(__tf.recentFrames = [${J(fC)}, ${J(fB)}, ${J(fA)}], 1)`);
   await app.ev(`__tf.loadFrame(${J(fB)}, { keepOrder: true })`);
-  await sleep(900);
+  await app.ev(`(() => { const d = (t) => document.querySelector('#panel > details[data-title="' + t + '"]'); d('Image').open = false; d('Frame').open = true; window.resizeTo(1111, 777); return 1; })()`);
+  await sleep(1300);
   app.close();
   await sleep(800);
   await app.launch();
+  const sect = await app.ev(`(() => { const d = (t) => document.querySelector('#panel > details[data-title="' + t + '"]').open; return { image: d('Image'), mask: d('Mask'), frame: d('Frame'), w: window.outerWidth, h: window.outerHeight }; })()`);
+  check('panel sections remember open/closed, window remembers its size', !sect.image && sect.mask && sect.frame && sect.w === 1111 && sect.h === 777, J(sect));
   const again = await app.ev(`({ rec: __tf.recentFrames, open: !document.querySelector('#frames').hidden, frame: __tf.frame.name })`);
   check('recent frames and sidebar state survive a restart', J(again.rec) === J([fC, fB, fA]) && again.open && again.frame === 'Frame B ’b’', J(again));
 

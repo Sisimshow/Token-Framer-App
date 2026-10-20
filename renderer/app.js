@@ -42,7 +42,7 @@ let persistTimer = 0;
 function persist() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
-    api.setSettings({ shared: state.shared, out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen });
+    api.setSettings({ shared: state.shared, out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen, sections: state.ui.sections });
   }, 500);
 }
 
@@ -158,6 +158,7 @@ function el(tag, cls, text) {
 }
 const srcOf = (c, cfg) => (c.scope === 'out' ? state.out : c.scope === 'ui' ? state.ui : cfg);
 
+let sectionsReady = false; // ignore the toggle events fired while the panel is first built and restored
 function buildPanel() {
   const panel = $('#panel');
   for (const sec of SECTIONS) {
@@ -165,6 +166,8 @@ function buildPanel() {
     d.open = !!sec.open;
     // collapsing the section that holds the tools switches the active tool off
     if (sec.title === 'Background removal') d.addEventListener('toggle', () => { if (!d.open && state.tool) setTool(state.tool); });
+    d.dataset.title = sec.title;
+    d.addEventListener('toggle', () => { if (sectionsReady) { state.ui.sections[sec.title] = d.open; persist(); } });
     d.append(el('summary', null, sec.title));
     const body = el('div', 'sec');
     for (const c of sec.controls) {
@@ -270,11 +273,11 @@ function buildControl(c, ctl) {
   } else if (c.t === 'cutouttools') {
     ctl.classList.add('toolgrid');
     const btn = (id, text, fn) => { const b = el('button', null, text); b.dataset.id = id; b.addEventListener('click', fn); ctl.append(b); return b; };
-    btn('wand', 'Wand', () => setTool('wand'));
-    btn('brush', 'Brush', () => setTool('brush'));
-    btn('rect', 'Rectangle', () => setTool('rect'));
-    btn('undo', 'Undo', undo);
-    btn('redo', 'Redo', redo);
+    btn('wand', 'Wand', () => setTool('wand')).title = 'Shortcut: W';
+    btn('brush', 'Brush', () => setTool('brush')).title = 'Shortcut: B';
+    btn('rect', 'Rectangle', () => setTool('rect')).title = 'Shortcut: R';
+    btn('undo', 'Undo', undo).title = 'Shortcut: Ctrl+Z';
+    btn('redo', 'Redo', redo).title = 'Shortcut: Ctrl+Y';
     btn('reset', 'Reset edit', resetEdits);
     const count = el('span', 'hint'); ctl.append(count);
     c.sync = () => {
@@ -747,6 +750,7 @@ function toolUp(e) {
   return true;
 }
 
+const TOOL_KEYS = { w: 'wand', b: 'brush', r: 'rect' }; // single-key shortcuts for the cutout tools
 function onKey(e, down) {
   const t = e.target;
   const typing = t && ((t.tagName === 'INPUT' && !['range', 'checkbox', 'color'].includes(t.type)) || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
@@ -761,6 +765,15 @@ function onKey(e, down) {
   if (e.ctrlKey && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (e.ctrlKey && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
   else if (k === 'escape' && state.tool) setTool(state.tool);
+  else if (e.ctrlKey && k === 's' && !e.shiftKey) { e.preventDefault(); saveCurrent(false); }
+  else if (!e.ctrlKey && !e.altKey && !e.metaKey && TOOL_KEYS[k]) {
+    const b = document.querySelector(`#panel button[data-id="${TOOL_KEYS[k]}"]`);
+    if (b && !b.disabled) setTool(TOOL_KEYS[k]);
+  } else if (!e.ctrlKey && !e.altKey && (k === 'arrowleft' || k === 'arrowright') && t?.type !== 'range' && state.items.length > 1) {
+    e.preventDefault();
+    const n = state.cur + (k === 'arrowright' ? 1 : -1);
+    if (n >= 0 && n < state.items.length) selectItem(n);
+  }
 }
 
 // ---------------------------------------------------------------- frame / hole
@@ -1272,6 +1285,9 @@ async function init() {
   state.recentFrames = (Array.isArray(s.recentFrames) ? s.recentFrames : []).filter((x) => typeof x === 'string' && !sameFile(x, state.defaultFrame)).slice(0, RECENT_MAX);
   state.ui.framesOpen = !!s.framesOpen;
   applyFramesOpen();
+  state.ui.sections = s.sections && typeof s.sections === 'object' ? s.sections : {};
+  document.querySelectorAll('#panel > details').forEach((d) => { if (typeof state.ui.sections[d.dataset.title] === 'boolean') d.open = state.ui.sections[d.dataset.title]; });
+  setTimeout(() => { sectionsReady = true; }, 0); // after the toggle events from the loop above
   state.editsStore = await api.getEdits();
   syncControls();
   const def = await api.defaultFramePath();

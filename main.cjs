@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, screen } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -11,11 +11,35 @@ let win = null;
 
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 const editsFile = () => path.join(app.getPath('userData'), 'edits.json');
+const windowFile = () => path.join(app.getPath('userData'), 'window.json'); // apart from settings.json, which the renderer rewrites whole
+
+/** Last window bounds, or {} if none saved or they no longer fit on any screen (e.g. a monitor was unplugged). */
+function loadWindowState() {
+  try {
+    const w = JSON.parse(fs.readFileSync(windowFile(), 'utf8'));
+    const ok = [w.x, w.y, w.width, w.height].every(Number.isFinite);
+    const visible = ok && screen.getAllDisplays().some((d) => {
+      const a = d.workArea;
+      return w.x < a.x + a.width - 100 && w.x + w.width > a.x + 100 && w.y < a.y + a.height - 50 && w.y + 50 > a.y;
+    });
+    return visible ? w : {};
+  } catch { return {}; }
+}
+function saveWindowState() {
+  if (!win || win.isDestroyed()) return;
+  try {
+    const b = win.getNormalBounds(); // the restored size, even while maximized
+    fs.mkdirSync(path.dirname(windowFile()), { recursive: true });
+    fs.writeFileSync(windowFile(), JSON.stringify({ ...b, maximized: win.isMaximized() }));
+  } catch { /* not worth interrupting the user */ }
+}
 
 function createWindow() {
+  const saved = loadWindowState();
   win = new BrowserWindow({
-    width: 1360,
-    height: 880,
+    width: saved.width || 1360,
+    height: saved.height || 880,
+    ...(saved.x !== undefined ? { x: saved.x, y: saved.y } : {}),
     minWidth: 980,
     minHeight: 640,
     title: 'Token Framer',
@@ -26,6 +50,12 @@ function createWindow() {
       nodeIntegration: false
     }
   });
+  if (saved.maximized) win.maximize();
+  let saveTimer = 0;
+  const later = () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveWindowState, 500); };
+  win.on('resize', later);
+  win.on('move', later);
+  win.on('close', saveWindowState);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i'))) {

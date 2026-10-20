@@ -25,7 +25,7 @@ Personal-use project, largely AI-written.
   - Remove color (+ Threshold / Edges only / Feather / Grow / Defringe) works automatically on every image, including in **Save all**.
   - Manual tools, for the current image only: **Wand** (click a background; Tolerance and Contiguous below),
     **Brush** (Erase or Restore mode, Brush size), **Rectangle** (erases the box). Each stroke/click is one edit:
-    **Undo** / **Redo** (Ctrl+Z, Ctrl+Y) step through them, **Reset edit** clears them all. Esc leaves a tool.
+    **Undo** / **Redo** (Ctrl+Z, Ctrl+Y) step through them, **Reset edit** clears them all. Esc leaves a tool. **W** / **B** / **R** pick Wand / Brush / Rectangle, **Left** / **Right** switch image, **Ctrl+S** saves the current token.
   - While a tool is active, drag draws; pan with Space+drag or the middle mouse button, zoom with the wheel.
   - **Show cutout only** previews the cutout alone, since with Pop-out layer only the effect is hard to see.
   - Manual edits belong to one image and are not saved between sessions, so **Save all** applies each image's own edits
