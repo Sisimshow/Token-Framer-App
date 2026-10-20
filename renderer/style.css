@@ -53,6 +53,8 @@ input[type=color] { padding: 0; width: 34px; height: 22px; border: 1px solid var
 button.active { border-color: var(--accent); background: var(--accent-dim); }
 .hint { color: var(--muted); font-size: 12px; }
 .row .ctl.wrap { flex-wrap: wrap; }
+.row .ctl.toolgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.toolgrid .hint { grid-column: 1 / -1; }
 #preview { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; image-rendering: auto; }
 #zoomBadge { position: absolute; right: 6px; top: 6px; background: rgba(0,0,0,.6); border-radius: 3px; padding: 1px 6px; font-size: 12px; }
 #dropHint { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 22px; background: rgba(106,162,255,.18); border: 2px dashed var(--accent); pointer-events: none; }

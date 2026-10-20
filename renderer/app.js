@@ -117,9 +117,9 @@ const SECTIONS = [
     { t: 'hint', show: (c) => hasCutout(c) && c.crPopOutOnly && !c.popOutEnabled, text: 'The cutout only shows on the pop-out layer. Enable Pop-out, or untick "Pop-out layer only".' },
     { t: 'subhead', label: 'AI cutout', note: 'one click, best for most art' },
     { t: 'aitool', label: '' },
-    num('aiSensitivity', 'Sensitivity', 0, 1, 0.01, (c) => hasAi(c)),
-    num('aiBlur', 'Mask blur', 0, 64, 1, (c) => hasAi(c)),
-    num('aiOffset', 'Mask offset', -64, 64, 1, (c) => hasAi(c)),
+    num('aiSensitivity', 'Sensitivity', 0, 1, 0.01),
+    num('aiBlur', 'Mask blur', 0, 64, 1),
+    num('aiOffset', 'Mask offset', -64, 64, 1),
     { t: 'subhead', label: 'By color', note: 'flat backgrounds' },
     { k: 'crEnabled', k2: 'crColor', t: 'tint', label: 'Remove color' },
     num('crThreshold', 'Threshold', 0, 100, 1, (c) => c.crEnabled),
@@ -268,14 +268,14 @@ function buildControl(c, ctl) {
     ctl.append(b, el('span', 'hint', 'Needs a one-time model download'));
     c.sync = () => { b.disabled = !state.base; };
   } else if (c.t === 'cutouttools') {
-    ctl.classList.add('wrap');
+    ctl.classList.add('toolgrid');
     const btn = (id, text, fn) => { const b = el('button', null, text); b.dataset.id = id; b.addEventListener('click', fn); ctl.append(b); return b; };
     btn('wand', 'Wand', () => setTool('wand'));
     btn('brush', 'Brush', () => setTool('brush'));
     btn('rect', 'Rectangle', () => setTool('rect'));
     btn('undo', 'Undo', undo);
     btn('redo', 'Redo', redo);
-    btn('reset', 'Reset edits', resetEdits);
+    btn('reset', 'Reset edit', resetEdits);
     const count = el('span', 'hint'); ctl.append(count);
     c.sync = () => {
       const it = curItem();
