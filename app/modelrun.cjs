@@ -1,12 +1,13 @@
 'use strict';
-// Tiled inference for same-size (1x) image restoration models, matching what ComfyUI does for "Upscale Image (using Model)" with an ESRGAN-type model:
-//   - spandrel pads every call to a multiple of 4 (minimum 4) on the right and bottom: reflect padding up to size - 1, replicate beyond that; the result is
-//     cropped back and clamped to 0..1
+// Tiled inference for image restoration / upscaling models (1x cleanup or Nx upscale), matching what ComfyUI does for "Upscale Image (using Model)":
+//   - spandrel pads every call to the model's size rules (a multiple of N, a minimum size) on the right and bottom: reflect padding up to size - 1, replicate
+//     beyond that; the output is cropped back to size * scale and clamped to 0..1
 //   - comfy.utils.tiled_scale: 512 px tiles overlapping by 32; tile starts come from range(0, dim - 32, 480), each clamped to dim - 32, with length
-//     min(512, dim - start); every tile edge gets a linear (t + 1) / 32 ramp; the sum is divided by the summed ramps; an image that fits one tile is run directly
+//     min(512, dim - start); every output tile edge gets a linear (t + 1) / feather ramp (feather = 32 * scale); the sum is divided by the summed ramps;
+//     an image that fits one tile is run directly
 // No Electron or onnxruntime dependency here: `runModel(data, w, h)` is injected, so the tiling can be tested with a fake model.
 
-const TILE = 512, OVERLAP = 32, MULTIPLE = 4, MINIMUM = 4;
+const TILE = 512, OVERLAP = 32;
 
 /** For one axis of length n padded to `total`: which source index each output index reads. Reflect for the first n - 1 pads, then replicate the last value. */
 function padMap(n, total) {
@@ -18,10 +19,10 @@ function padMap(n, total) {
   return m;
 }
 
-/** Pads a planar CHW float tile on the right/bottom the way spandrel does. Returns {data, w, h}. */
-function padTile(data, w, h, c = 3) {
-  const ceil = (x) => (x % MULTIPLE === 0 ? x : x - (x % MULTIPLE) + MULTIPLE);
-  const pw = ceil(Math.max(MINIMUM, w)), ph = ceil(Math.max(MINIMUM, h));
+/** Pads a planar CHW float tile on the right/bottom the way spandrel does for a model that needs sizes of `multiple` and at least `minimum`. Returns {data, w, h}. */
+function padTile(data, w, h, c = 3, multiple = 4, minimum = 4) {
+  const ceil = (x) => (x % multiple === 0 ? x : x - (x % multiple) + multiple);
+  const pw = ceil(Math.max(minimum, w)), ph = ceil(Math.max(minimum, h));
   if (pw === w && ph === h) return { data, w, h };
   const mx = padMap(w, pw), my = padMap(h, ph);
   const out = new Float32Array(c * pw * ph);
@@ -34,17 +35,21 @@ function padTile(data, w, h, c = 3) {
   return { data: out, w: pw, h: ph };
 }
 
-/** Wraps a raw model call with spandrel's pad / crop / clamp: `runModel(data, w, h)` gets multiple-of-4 planar float input and returns planar float output of the same size. */
-function withSpandrelPadding(runModel, c = 3) {
+/**
+ * Wraps a raw model call with spandrel's pad / crop / clamp: `runModel(data, w, h)` gets planar float input of a size that meets the model's rules and returns
+ * planar float output of (w * scale) x (h * scale). The wrapper's result is the cropped, clamped output for the unpadded input size.
+ */
+function withSpandrelPadding(runModel, { c = 3, scale = 1, multiple = 4, minimum = 4 } = {}) {
   return async (data, w, h) => {
-    const p = padTile(data, w, h, c);
+    const p = padTile(data, w, h, c, multiple, minimum);
     const out = await runModel(p.data, p.w, p.h);
-    const res = new Float32Array(c * w * h);
+    const ow = w * scale, oh = h * scale, pow = p.w * scale, poh = p.h * scale;
+    const res = new Float32Array(c * ow * oh);
     for (let ch = 0; ch < c; ch++) {
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const v = out[(ch * p.h + y) * p.w + x];
-          res[(ch * h + y) * w + x] = v < 0 ? 0 : v > 1 ? 1 : v;
+      for (let y = 0; y < oh; y++) {
+        for (let x = 0; x < ow; x++) {
+          const v = out[(ch * poh + y) * pow + x];
+          res[(ch * oh + y) * ow + x] = v < 0 ? 0 : v > 1 ? 1 : v;
         }
       }
     }
@@ -52,7 +57,7 @@ function withSpandrelPadding(runModel, c = 3) {
   };
 }
 
-/** Tile origins and lengths along one axis, as comfy.utils.tiled_scale computes them. */
+/** Tile origins and lengths along one axis (input pixels), as comfy.utils.tiled_scale computes them. */
 function axisTiles(dim, tile = TILE, overlap = OVERLAP) {
   const starts = dim > tile ? Array.from({ length: Math.ceil((dim - overlap) / (tile - overlap)) }, (_, i) => i * (tile - overlap)) : [0];
   return starts.map((s) => { const pos = Math.max(0, Math.min(dim - overlap, s)); return { pos, len: Math.min(tile, dim - pos) }; });
@@ -65,17 +70,19 @@ function countTiles(w, h, tile = TILE, overlap = OVERLAP) {
 }
 
 /**
- * Runs `callTile(data, w, h)` (planar CHW float in 0..1, same-size output) over the image with feathered overlapping tiles.
- * `src` is planar CHW (3 channels). Returns planar CHW. `onProgress(done, total)` is called after each tile.
+ * Runs `callTile(data, w, h)` (planar CHW float in 0..1, output (w * scale) x (h * scale)) over the image with feathered overlapping tiles.
+ * `src` is planar CHW (3 channels). Returns planar CHW of (w * scale) x (h * scale). `onProgress(done, total)` is called after each tile.
  */
-async function tiledRun(src, w, h, callTile, { tile = TILE, overlap = OVERLAP, onProgress = () => {} } = {}) {
+async function tiledRun(src, w, h, callTile, { tile = TILE, overlap = OVERLAP, scale = 1, onProgress = () => {} } = {}) {
   const c = 3, total = countTiles(w, h, tile, overlap);
   if (w <= tile && h <= tile) {
     const out = await callTile(src, w, h);
     onProgress(1, 1);
     return out;
   }
-  const out = new Float32Array(c * w * h), div = new Float32Array(w * h);
+  const ow = w * scale, oh = h * scale;
+  const out = new Float32Array(c * ow * oh), div = new Float32Array(ow * oh);
+  const feather = Math.round(overlap * scale);
   let done = 0;
   for (const ty of axisTiles(h, tile, overlap)) {
     for (const tx of axisTiles(w, tile, overlap)) {
@@ -85,20 +92,22 @@ async function tiledRun(src, w, h, callTile, { tile = TILE, overlap = OVERLAP, o
         piece.set(src.subarray((ch * h + ty.pos + y) * w + tx.pos, (ch * h + ty.pos + y) * w + tx.pos + tw), (ch * th + y) * tw);
       }
       const ps = await callTile(piece, tw, th);
-      // feather: a linear ramp over `overlap` pixels at both ends of each axis (skipped when the tile is no longer than the ramp)
-      const ramp = (len) => { const m = new Float32Array(len).fill(1); if (overlap < len) for (let t = 0; t < overlap; t++) { const a = (t + 1) / overlap; m[t] *= a; m[len - 1 - t] *= a; } return m; };
-      const mx = ramp(tw), my = ramp(th);
-      for (let y = 0; y < th; y++) {
-        for (let x = 0; x < tw; x++) {
-          const m = mx[x] * my[y], o = (ty.pos + y) * w + tx.pos + x;
+      const pw = tw * scale, ph = th * scale;
+      // feather: a linear ramp over `feather` output pixels at both ends of each axis (skipped when the tile is no longer than the ramp)
+      const ramp = (len) => { const m = new Float32Array(len).fill(1); if (feather < len) for (let t = 0; t < feather; t++) { const a = (t + 1) / feather; m[t] *= a; m[len - 1 - t] *= a; } return m; };
+      const mx = ramp(pw), my = ramp(ph);
+      const ox = tx.pos * scale, oy = ty.pos * scale;
+      for (let y = 0; y < ph; y++) {
+        for (let x = 0; x < pw; x++) {
+          const m = mx[x] * my[y], o = (oy + y) * ow + ox + x;
           div[o] += m;
-          for (let ch = 0; ch < c; ch++) out[ch * w * h + o] += ps[(ch * th + y) * tw + x] * m;
+          for (let ch = 0; ch < c; ch++) out[ch * ow * oh + o] += ps[(ch * ph + y) * pw + x] * m;
         }
       }
       onProgress(++done, total);
     }
   }
-  for (let ch = 0; ch < c; ch++) for (let i = 0; i < w * h; i++) out[ch * w * h + i] /= div[i];
+  for (let ch = 0; ch < c; ch++) for (let i = 0; i < ow * oh; i++) out[ch * ow * oh + i] /= div[i];
   return out;
 }
 
@@ -109,15 +118,25 @@ function toPlanar(rgba, w, h) {
   return out;
 }
 
-/** Cleans an RGBA image (alpha is passed through untouched). `runModel` is the raw network call (multiple-of-4 sizes). Returns new RGBA bytes. */
-async function cleanRgba(runModel, rgba, w, h, { onProgress } = {}) {
-  const res = await tiledRun(toPlanar(rgba, w, h), w, h, withSpandrelPadding(runModel), { onProgress });
-  const n = w * h, out = new Uint8Array(rgba.length);
+/**
+ * Cleans (scale 1) or upscales (scale > 1) an RGBA image. `runModel` is the raw network call; `opts` carries the model's rules ({scale, multiple, minimum})
+ * and optionally `tile` and `onProgress`. A 1x model passes the alpha channel through; an upscaler needs an opaque image (the model sees RGB only and the alpha
+ * would have to be resized separately), so it rejects anything with transparency. Returns {rgba, w, h} (w, h already multiplied by the scale).
+ */
+async function processRgba(runModel, rgba, w, h, { scale = 1, multiple = 4, minimum = 4, tile = TILE, onProgress } = {}) {
+  if (scale > 1) for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 255) throw new Error('Upscaling needs an opaque image (the model works on RGB only).');
+  const res = await tiledRun(toPlanar(rgba, w, h), w, h, withSpandrelPadding(runModel, { scale, multiple, minimum }), { tile, scale, onProgress });
+  const ow = w * scale, oh = h * scale, n = ow * oh, out = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
     for (let c = 0; c < 3; c++) { const v = Math.round(res[c * n + i] * 255); out[i * 4 + c] = v < 0 ? 0 : v > 255 ? 255 : v; }
-    out[i * 4 + 3] = rgba[i * 4 + 3];
+    out[i * 4 + 3] = scale === 1 ? rgba[i * 4 + 3] : 255;
   }
-  return out;
+  return { rgba: out, w: ow, h: oh };
 }
 
-module.exports = { TILE, OVERLAP, padTile, withSpandrelPadding, axisTiles, countTiles, tiledRun, toPlanar, cleanRgba };
+/** 1x convenience wrapper kept for callers that only want the bytes back. */
+async function cleanRgba(runModel, rgba, w, h, opts = {}) {
+  return (await processRgba(runModel, rgba, w, h, { scale: 1, ...opts })).rgba;
+}
+
+module.exports = { TILE, OVERLAP, padTile, withSpandrelPadding, axisTiles, countTiles, tiledRun, toPlanar, processRgba, cleanRgba };

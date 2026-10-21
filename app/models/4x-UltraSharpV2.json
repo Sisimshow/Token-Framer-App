@@ -1,0 +1,7 @@
+{
+  "architecture": "DAT",
+  "scale": 4,
+  "multiple": 1,
+  "minimum": 16,
+  "source": "4x-UltraSharpV2.pth"
+}

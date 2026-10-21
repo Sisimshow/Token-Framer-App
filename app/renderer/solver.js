@@ -221,7 +221,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
   const isOpen = () => !root.hidden;
   async function open() {
     root.hidden = false;
-    try { models = (await api.listModels()).map((m) => m.name); } catch { models = []; }
+    try { models = (await api.listModels()).filter((m) => m.scale === 1).map((m) => m.name); } catch { models = []; } // only same-size cleanup models make sense for the renders
     if (!models.includes(params.preCleanModel)) params.preCleanModel = preferredModel();
     const key = models.join('|');
     if (!ui || key !== builtFor) { // first open, or the models folder changed since

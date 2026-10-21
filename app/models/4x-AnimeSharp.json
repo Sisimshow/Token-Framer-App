@@ -1,0 +1,7 @@
+{
+  "architecture": "ESRGAN",
+  "scale": 4,
+  "multiple": 1,
+  "minimum": 2,
+  "source": "4x-AnimeSharp.pth"
+}

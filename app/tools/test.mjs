@@ -331,6 +331,39 @@ async function main() {
     await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art back for the checks that follow
   }
 
+  // -- Upscale image mode: the same screen offers only the Nx models, a 4x model really makes the picture 4x larger, transparency is refused, output is a PNG
+  if (!fs.existsSync(path.join(root, 'models', '4x-UltraSharp.onnx'))) {
+    console.log('SKIP  Upscale image: models/4x-UltraSharp.onnx not found (convert it with tools/convert-model.py to run these checks)');
+  } else {
+    const smallP = path.join(work, 'Tiny.png'), glassP = path.join(work, 'Tiny glass.png'), upP = path.join(work, 'Tiny (4x).png');
+    fs.rmSync(upP, { force: true });
+    const u = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+      const mk = (transparent) => { const W = 120, H = 80, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); const d = x.createImageData(W, H);
+        for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) { const i = (y * W + xx) * 4; const b = 90 + 80 * (Math.hypot(xx - 60, y - 40) < 25 ? 1 : 0) + (xx % 9) * 2; d.data[i] = b; d.data[i + 1] = b * 0.8; d.data[i + 2] = b * 0.6; d.data[i + 3] = transparent && xx < 10 ? 0 : 255; }
+        x.putImageData(d, 0, 0); return c; };
+      const save = async (c, p) => window.api.writeFile(p, new Uint8Array(await (await new Promise((res) => c.toBlob(res, 'image/png'))).arrayBuffer()));
+      await save(mk(false), ${J(smallP)}); await save(mk(true), ${J(glassP)});
+      q('#btnTools').click(); await wait(80); q('#btnUpscaleImage').click(); await wait(300);
+      const o = { open: !q('#imgclean').hidden, mode: __tf.imgclean.mode, title: q('#icTitle').textContent, models: [...q('#icModel').options].map((x) => x.value) };
+      await __tf.imgclean.loadPath(${J(smallP)});
+      for (let i = 0; i < 150 && !__tf.imgclean.cleaned; i++) await wait(100);
+      const c = __tf.imgclean.cleaned; o.out = c ? [c.width, c.height] : null; o.info = __tf.imgclean.info; o.saveOn = !q('#icSave').disabled;
+      await __tf.imgclean.loadPath(${J(glassP)}); await wait(300);
+      o.refused = { opaque: __tf.imgclean.opaque, cleaned: !!__tf.imgclean.cleaned, saveOff: q('#icSave').disabled };
+      await __tf.imgclean.loadPath(${J(smallP)});
+      for (let i = 0; i < 150 && !__tf.imgclean.cleaned; i++) await wait(100);
+      return o;
+    })()`);
+    check('Upscale image: opens in upscale mode with only the Nx models, a 4x model makes the picture 4x larger, transparency is refused', u.open && u.mode === 'upscale' && u.title === 'Upscale image' && u.models.length >= 2 && u.models.every((m) => /^4x/.test(m)) && !u.models.includes('1x_PureVision') && u.out && u.out[0] === 480 && u.out[1] === 320 && u.info.scale === 4 && u.saveOn && u.refused.opaque === false && !u.refused.cleaned && u.refused.saveOff, J(u));
+    const saved = await app.ev(`__tf.imgclean.saveTo(${J(upP)})`);
+    const magic = fs.existsSync(upP) ? fs.readFileSync(upP).subarray(0, 4).toString('hex') : '';
+    const back = await app.ev(`(async () => { const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(upP)})])); return [bm.width, bm.height]; })()`);
+    check('Upscale image: the saved file is a 480x320 PNG named with the scale', magic === '89504e47' && saved.w === 480 && J(back) === J([480, 320]) && /Tiny \(4x\)\.png$/.test(saved.path), J({ magic, saved: saved.w, back }));
+    const switched = await app.ev(`(async () => { await __tf.imgclean.open('clean'); const o = { mode: __tf.imgclean.mode, models: [...document.querySelector('#icModel').options].map((x) => x.value) }; __tf.imgclean.close(); return o; })()`);
+    check('Clean image mode after upscale lists only the 1x models', switched.mode === 'clean' && switched.models.includes('1x_PureVision') && switched.models.every((m) => /^1x/.test(m)), J(switched));
+  }
+
   // -- Auto center anchors: top keeps the art's top edge fixed while Scale x changes, bottom keeps the bottom edge, centre the middle
   const anc = await app.ev(`(() => { const T = window.__tf; const base = { width: 300, height: 600 }; const cfg = T.eff();
     const edge = (a, m) => { const r = T.resolveCfg({ ...cfg, fitEnabled: true, fitAnchor: a, fitScale: m, fitOffsetX: 0, fitOffsetY: 0 }, base); const w = 512 * r.baseScale, h = w * 2; const y = 256 - w / 2 + r.baseOffsetY; return { top: y, bottom: y + h, mid: y + h / 2 }; };
@@ -642,6 +675,27 @@ async function main() {
     return out;
   })()`);
   check('solve frame: cleaned copies are used only when both exist and pre-clean is on; a new render drops its cleaned copy', pc.raw === 153 && pc.onlyOne === 153 && pc.both === 0 && pc.optionOff === 153 && pc.newRenderDropsClean === 153 && pc.ready.white === false && pc.ready.black === true, J(pc));
+
+  // -- Tiled engine with an output scale: a fake nearest-neighbour upscaler must be reproduced exactly however the image is tiled, padded and blended
+  {
+    const { createRequire } = await import('node:module');
+    const mr = createRequire(import.meta.url)(path.join(root, 'modelrun.cjs'));
+    const cases = [[130, 70, 96], [300, 200, 96], [97, 5, 512], [1, 1, 512], [520, 40, 512], [64, 200, 64]];
+    let worst = 0, badSize = 0, dimsOk = true, calls = 0;
+    for (const scale of [2, 4]) {
+      for (const [w, h, tile] of cases) {
+        const rgba = new Uint8Array(w * h * 4).map((_, i) => ((i * 7919 + w * scale) % 251)); for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+        const nearest = async (data, tw, th) => { calls++; if (tw < 16 || th < 16 || tw % 8 || th % 8) badSize++; const out = new Float32Array(3 * tw * scale * th * scale);
+          for (let c = 0; c < 3; c++) for (let y = 0; y < th * scale; y++) for (let x = 0; x < tw * scale; x++) out[(c * th * scale + y) * tw * scale + x] = data[(c * th + (y / scale | 0)) * tw + (x / scale | 0)]; return out; };
+        const r = await mr.processRgba(nearest, rgba, w, h, { scale, multiple: 8, minimum: 16, tile });
+        if (r.w !== w * scale || r.h !== h * scale || r.rgba.length !== w * scale * h * scale * 4) dimsOk = false;
+        for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++) for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(r.rgba[(y * r.w + x) * 4 + c] - rgba[((y / scale | 0) * w + (x / scale | 0)) * 4 + c]));
+      }
+    }
+    let refused = '';
+    try { await mr.processRgba(async (d) => d, Uint8Array.from([1, 2, 3, 100]), 1, 1, { scale: 4, multiple: 1, minimum: 2 }); } catch (e) { refused = e.message; }
+    check('model engine (scale): a nearest-neighbour 2x and 4x upscaler is reproduced exactly with tiling, padding to multiples of 8 (min 16) and feathering; transparent input is refused for upscalers', worst <= 1 && badSize === 0 && dimsOk && /opaque/.test(refused), J({ worst, badSize, dimsOk, calls, refused }));
+  }
 
   // -- RMBG matte post-processing (same maths as the ComfyUI RMBG node), on synthetic mattes
   const mt = await app.ev(`(async () => {

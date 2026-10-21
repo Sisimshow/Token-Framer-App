@@ -1,5 +1,6 @@
-// "Clean image" tool: runs a 1x restoration model (converted with tools/convert-model.py, kept in app/models) over an opaque image, with a before/after view.
-// The model sees RGB only, so an image that already has transparency cannot be cleaned and is refused. Inference runs in the main process (onnxruntime-node).
+// "Clean image" / "Upscale image" tool: runs a 1x restoration model or an Nx upscaler (converted with tools/convert-model.py, kept in app/models) over an opaque image,
+// with a before/after view. One screen, two modes: the mode only decides which models are offered and how things are named.
+// The models see RGB only, so an image that already has transparency cannot be processed and is refused. Inference runs in the main process (onnxruntime-node).
 import { fitRect } from './lib/cleanframe.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -9,7 +10,8 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   const canvas = $('#icPreview');
   const ctx = canvas.getContext('2d');
   const S = canvas.width;
-  let models = [], model = '';
+  let models = [], model = '', mode = 'clean';   // mode: 'clean' (1x models) or 'upscale' (Nx models)
+  const modeModels = () => models.filter((m) => (mode === 'upscale' ? m.scale > 1 : m.scale === 1));
   let src = null;                       // { path, name, w, h, rgba, canvas, opaque }
   let cleanedCanvas = null, info = null, showOriginal = false, busy = false, dirty = false, currentJob = '';
   const view = { z: 1, x: 0, y: 0 };    // zoom and pan of the preview (canvas pixels)
@@ -54,12 +56,12 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   // ---------------------------------------------------------------- models
   async function refreshModels() {
     models = await api.listModels();
-    const sel = $('#icModel');
+    const list = modeModels(), sel = $('#icModel');
     sel.textContent = '';
-    for (const m of models) { const o = document.createElement('option'); o.value = m.name; o.textContent = m.name; sel.append(o); }
-    if (!models.some((m) => m.name === model)) model = models[0]?.name || '';
+    for (const m of list) { const o = document.createElement('option'); o.value = m.name; o.textContent = m.scale > 1 ? `${m.name} (${m.scale}×)` : m.name; sel.append(o); }
+    if (!list.some((m) => m.name === model)) model = list[0]?.name || '';
     sel.value = model;
-    if (!models.length) setMsg('No models found. Convert one with tools/convert-model.py (see the README) and put the .onnx file in the app\'s models folder.', true);
+    if (!list.length) setMsg(`No ${mode === 'upscale' ? 'upscaling' : 'cleanup'} models found. Convert one with tools/convert-model.py (see the README) and put the .onnx file in the models folder.`, true);
   }
 
   // ---------------------------------------------------------------- loading and cleaning
@@ -116,9 +118,9 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
           continue;
         }
         if (job !== src || name !== model) { dirty = true; continue; } // superseded while it ran: never show it
-        cleanedCanvas = toCanvas(new Uint8ClampedArray(r.rgba.buffer, r.rgba.byteOffset, r.rgba.byteLength), job.w, job.h);
-        info = { ms: r.ms, provider: r.provider, w: job.w, h: job.h };
-        setMsg(`Cleaned ${job.w}×${job.h} with ${name} in ${(r.ms / 1000).toFixed(2)} s on ${r.provider}. Scroll to zoom, drag to pan, double-click to reset.`);
+        cleanedCanvas = toCanvas(new Uint8ClampedArray(r.rgba.buffer, r.rgba.byteOffset, r.rgba.byteLength), r.w, r.h);
+        info = { ms: r.ms, provider: r.provider, w: r.w, h: r.h, scale: r.scale };
+        setMsg(`${r.scale > 1 ? `Upscaled ${job.w}×${job.h} to ${r.w}×${r.h}` : `Cleaned ${job.w}×${job.h}`} with ${name} in ${(r.ms / 1000).toFixed(2)} s on ${r.provider}. Scroll to zoom, drag to pan, double-click to reset.`);
         enableSave(true);
         redraw();
       } while (dirty);
@@ -138,7 +140,8 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     return { path: outPath, w: cleanedCanvas.width, h: cleanedCanvas.height, bytes: bytes.length };
   }
   function defaultName() {
-    const name = `${src?.name || 'Image'} (clean).png`;
+    const scale = models.find((m) => m.name === model)?.scale || 1;
+    const name = `${src?.name || 'Image'} (${scale > 1 ? `${scale}x` : 'clean'}).png`;
     return src?.path ? `${dirOf(src.path)}${sepOf(src.path)}${name}` : name;
   }
   async function saveClicked(andOpen) {
@@ -161,10 +164,17 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
 
   // ---------------------------------------------------------------- open / close / wiring
   const isOpen = () => !root.hidden;
-  async function open() {
+  /** mode 'clean' offers the 1x models, 'upscale' the Nx ones; switching mode drops the loaded image's result. */
+  async function open(nextMode = mode) {
     root.hidden = false;
+    if (nextMode !== mode) { mode = nextMode; cleanedCanvas = null; info = null; model = ''; enableSave(false); }
+    $('#icTitle').textContent = mode === 'upscale' ? 'Upscale image' : 'Clean image';
+    $('#icHint').textContent = mode === 'upscale'
+      ? 'An upscaler enlarges an opaque image 2× or 4× and adds detail. The models work on RGB only, so they cannot process an image that already has transparency. Saved as a PNG.'
+      : 'The model works on RGB only: it cleans opaque images (for example a render on a solid background) and cannot clean an image that already has transparency. Saved as a PNG.';
     try { await refreshModels(); } catch (err) { setMsg(`Could not list models: ${err.message}`, true); }
     redraw();
+    if (src && src.opaque && !cleanedCanvas) run(); // an image already loaded in the other mode is processed with this mode's model
   }
   function close() { root.hidden = true; }
 
@@ -188,6 +198,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     get info() { return info; },
     get opaque() { return src ? src.opaque : null; },
     get model() { return model; },
+    get mode() { return mode; },
     /** For tests: save to a known path, then do what "Save and open as image" does. */
     async saveAndOpen(outPath) { const r = await saveTo(outPath); await openImages([outPath]); close(); return r; },
     get cleaned() { return cleanedCanvas; },

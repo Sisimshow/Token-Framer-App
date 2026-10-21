@@ -112,9 +112,18 @@ ipcMain.handle('fs:write', async (_e, p, bytes) => {
 // ---------------------------------------------------------------- image cleanup models (1x ESRGAN-type, converted with tools/convert-model.py)
 const modelDir = () => path.join(__dirname, 'models');
 const cleanSessions = new Map(); // model name -> { session, provider }
+const MAX_OUTPUT_PIXELS = 50e6;   // an upscale result bigger than this (about 7000 x 7000) would need more memory than is sensible
 
+/** Models in the models folder with what the converter wrote next to each (scale and size rules); an .onnx without that file is taken to be a 1x model needing multiples of 4. */
 function listCleanModels() {
-  try { return fs.readdirSync(modelDir()).filter((f) => /\.onnx$/i.test(f)).map((f) => ({ name: f.replace(/\.onnx$/i, ''), file: f })); } catch { return []; }
+  try {
+    return fs.readdirSync(modelDir()).filter((f) => /\.onnx$/i.test(f)).map((f) => {
+      const name = f.replace(/\.onnx$/i, '');
+      let meta = {};
+      try { meta = JSON.parse(fs.readFileSync(path.join(modelDir(), `${name}.json`), 'utf8')); } catch { /* no description file */ }
+      return { name, file: f, scale: Number(meta.scale) || 1, multiple: Number(meta.multiple) || 4, minimum: Number(meta.minimum) || 4, architecture: meta.architecture || '' };
+    });
+  } catch { return []; }
 }
 async function getCleanSession(name) {
   if (cleanSessions.has(name)) return cleanSessions.get(name);
@@ -139,16 +148,27 @@ ipcMain.handle('models:list', async () => listCleanModels());
 ipcMain.handle('models:clean', async (e, name, rgba, w, h, reqId) => { // reqId comes back on every progress event so each screen can tell its own job apart
   if (!(rgba instanceof Uint8Array) || !Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || rgba.length !== w * h * 4) throw new Error('Unexpected image data.');
   const { session, ort, provider } = await getCleanSession(name);
+  const meta = listCleanModels().find((m) => m.name === name);
+  if (w * meta.scale * h * meta.scale > MAX_OUTPUT_PIXELS) throw new Error(`The result would be ${w * meta.scale}×${h * meta.scale} pixels, more than the ${Math.round(MAX_OUTPUT_PIXELS / 1e6)} megapixel limit. Use a smaller image.`);
   const runModel = async (data, tw, th) => {
     const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', data, [1, 3, th, tw]) });
     return out[session.outputNames[0]].data;
   };
   const t = Date.now();
   let last = 0;
-  const result = await modelrun.cleanRgba(runModel, rgba, w, h, {
-    onProgress: (done, total) => { if (Date.now() - last > 100 || done === total) { last = Date.now(); e.sender.send('models:progress', { done, total, id: reqId }); } }
-  });
-  return { rgba: result, ms: Date.now() - t, provider };
+  const onProgress = (done, total) => { if (Date.now() - last > 100 || done === total) { last = Date.now(); e.sender.send('models:progress', { done, total, id: reqId }); } };
+  // like ComfyUI, retry with smaller tiles if the GPU runs out of memory
+  let result = null;
+  for (const tile of [512, 256, 128]) {
+    try {
+      result = await modelrun.processRgba(runModel, rgba, w, h, { scale: meta.scale, multiple: meta.multiple, minimum: meta.minimum, tile, onProgress });
+      break;
+    } catch (err) {
+      if (tile === 128 || !/memory|alloc|out of|bad_alloc/i.test(String(err.message))) throw err;
+      console.warn(`model run failed at tile ${tile} (${err.message}); retrying smaller`);
+    }
+  }
+  return { rgba: result.rgba, w: result.w, h: result.h, scale: meta.scale, ms: Date.now() - t, provider };
 });
 
 ipcMain.handle('app:defaultFrame', async () => path.join(__dirname, 'assets', 'default.webp'));

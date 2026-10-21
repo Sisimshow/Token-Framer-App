@@ -40,6 +40,8 @@ Personal-use project, largely AI-written.
   Like the workflow, it first runs both renders through the image-cleanup model (**Clean noise first**, on by default when `app/models` has a model; untick it to skip). Based on the author's ComfyUI "Token Background Solver V2" workflow.
 - **Tools > Clean image…** removes compression noise and artifacts from an *opaque* image with a converted restoration model (1x_PureVision), with a zoomable before/after view.
   The model works on RGB only, so it cannot clean an image that already has transparency. Saved as a PNG; **Save and open as image** also opens it in Token Framer.
+- **Tools > Upscale image…** enlarges an *opaque* image 4× with an upscaling model (4x-UltraSharp, 4x-AnimeSharp, 4x-UltraMix_Smooth, the 4x-UltraSharpV2 DAT model) on the same
+  screen as Clean image; saved as a PNG.
 - **Converted image models** (used by Clean image) live in `app/models/*.onnx` and are not tracked by git. Recreate one with ComfyUI's Python (ComfyUI need not be running): 
   `E:\SwarmUI\dlbackend\comfy\python_embeded\python.exe app	ools\convert-model.py "<path>x_PureVision.pth" app\modelsx_PureVision.onnx`.
 - Settings persist in the Electron user-data folder. F12 opens DevTools.

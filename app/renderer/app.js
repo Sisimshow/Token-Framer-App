@@ -1270,7 +1270,8 @@ function setup() {
   const cleaner = (window.__cleaner = initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }));
   window.__solver = initSolver({ api, loadFrame, dirOf, sepOf, baseOf });
   window.__imgclean = initImageCleaner({ api, openImages, dirOf, sepOf, baseOf });
-  $('#btnCleanImage').onclick = () => { setToolsMenu(false); window.__imgclean.open(); };
+  $('#btnCleanImage').onclick = () => { setToolsMenu(false); window.__imgclean.open('clean'); };
+  $('#btnUpscaleImage').onclick = () => { setToolsMenu(false); window.__imgclean.open('upscale'); };
   $('#btnCleanFrame').onclick = () => { setToolsMenu(false); cleaner.open(); };
   $('#btnSolveFrame').onclick = () => { setToolsMenu(false); window.__solver.open(); };
   $('#btnTools').onclick = (e) => { e.stopPropagation(); setToolsMenu($('#toolsMenu').hidden); };

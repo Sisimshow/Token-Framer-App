@@ -29,6 +29,7 @@
           <div id="toolsMenu" hidden>
             <div class="tmhead">Image tools</div>
             <button id="btnCleanImage" title="Remove compression noise and artifacts from an opaque image with a restoration model">Clean image…</button>
+            <button id="btnUpscaleImage" title="Enlarge an opaque image 2x or 4x with an upscaling model">Upscale image…</button>
             <div class="tmhead">Frame tools</div>
             <button id="btnCleanFrame" title="Refine a frame's transparent edges, trim the empty border and resize it">Clean frame…</button>
             <button id="btnSolveFrame" title="Make a transparent frame from the same render on a white and on a black background">Solve frame background…</button>
@@ -127,7 +128,7 @@
   </div>
   <div id="imgclean" class="toolscreen" hidden role="dialog" aria-modal="true" aria-label="Clean image">
     <div class="tsBar">
-      <strong>Clean image</strong>
+      <strong id="icTitle">Clean image</strong>
       <button id="icOpen" title="Pick an image (or drop one here)">Open image…</button>
       <span id="icName" class="tsName muted">no image</span>
       <span class="grow"></span>
@@ -139,7 +140,7 @@
       <aside class="tsSide">
         <div class="tsControls">
           <div class="row"><label>Model</label><div class="ctl"><select id="icModel"></select></div></div>
-          <div class="hint">The model works on RGB only: it cleans opaque images (for example a render on a solid background) and cannot clean an image that already has transparency. Saved as a PNG.</div>
+          <div id="icHint" class="hint"></div>
         </div>
         <div class="tsFoot">
           <div id="icMsg" class="tsMsg hint">Open an image to begin.</div>

@@ -41,11 +41,12 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   -> shared crop/resize from `cleanframe.js` -> "clear the middle": `assets/middle-mask.png`, a fixed 1000x1000 circle subtracted from alpha, Lanczos-scaled to other sizes),
   run in `lib/solveframe.worker.js`. Order differs from Clean frame on purpose (floor/ceiling before solidify; do not reuse `shapeAlpha`). NOT ported: the workflow's 1x_PureVision
   pre-clean is now the optional `preClean` step (see the image cleanup models note below). Parity is only claimed for PNG inputs without it; with it the JPEG-noise step matches the workflow.
-- Image cleanup models: 1x ESRGAN-type `.pth` files (e.g. 1x_PureVision) are converted once with `tools/convert-model.py` (ComfyUI's python; ComfyUI need not run) into
-  `app/models/*.onnx`, which is gitignored (large, licence unchecked). `modelrun.cjs` (pure CJS, no electron) is the engine: spandrel-style padding (right/bottom to a multiple
-  of 4, reflect then replicate) + comfy `tiled_scale` (512 tiles, 32 overlap, feathered), unit-tested with fake models and checked once against ComfyUI itself (max 1 LSB at
-  1001x777). `main.cjs` exposes `models:list` / `models:clean` (onnxruntime-node, DirectML then CPU, sessions cached; only files really in `models/` can be named). RGB only:
-  alpha is passed through, so the Clean image screen (Tools > Clean image…, `renderer/imgclean.js`) REFUSES images that have transparency. The solver's "Clean noise first" option
+- Image cleanup and upscale models: ESRGAN-type (1x cleanup, 4x upscale) and DAT `.pth` files (e.g. 1x_PureVision, 4x-UltraSharp, 4x-UltraSharpV2) are converted once with `tools/convert-model.py` (ComfyUI's python; ComfyUI need not run) into
+  `app/models/<name>.onnx` plus a `<name>.json` (scale and size rules the converter writes; an .onnx without one is taken as 1x, multiples of 4); both are gitignored/derived (large, licence unchecked). `modelrun.cjs` (pure CJS, no electron) is the engine: spandrel-style padding (right/bottom to the model's multiple/minimum,
+  reflect then replicate) + comfy `tiled_scale` (512 tiles, 32 overlap, feather = 32 * scale), unit-tested with fake models (incl. a nearest-neighbour 2x/4x upscaler) and checked once
+  against ComfyUI itself on the real models (1x PureVision at 1001x777, 4x-UltraSharp, DAT 4x-UltraSharpV2: max 1 LSB). `main.cjs` exposes `models:list` / `models:clean` (onnxruntime-node, DirectML then CPU, sessions cached; only files really in `models/` can be named). RGB only:
+  the Clean image / Upscale image screen (Tools > Clean image… and Upscale image…, one screen `renderer/imgclean.js`, `open('clean'|'upscale')` filters the models by scale) REFUSES images that
+  have transparency. `main.cjs` caps the result at 50 Mpx and retries with smaller tiles (256, 128) on a memory error. The solver's "Clean noise first" option
   (default on when a model exists; the workflow's 1x_PureVision step) cleans each render once on load via `models:clean` (request ids keep progress events per screen), hands the
   cleaned copy to the worker, and the matte uses cleaned copies only when BOTH exist. A packaged build would need `models/` unpacked from asar.
 - `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).
