@@ -46,7 +46,7 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   so they cannot drift.
 - "Edit this image only" (`state.editOnly`) follows the selected image: on when it has any `override`, off otherwise. With 2+ images, changing a
   key in `PER_IMAGE_KEYS` (pop-out enable/arc/rotation/center, AI sensitivity/blur/offset, feather/grow/defringe, Pop-out layer only) or pushing a cutout
-  edit writes to the image's override and switches the box on, with a status message (`enableEditOnly`). Colour-removal keys and tool settings stay shared.
+  edit writes to the image's override and switches the box on, with a status message (`enableEditOnly`). Colour-removal keys and tool settings stay shared. `PER_IMAGE_KEYS` always write to the image's override (even a lone image), are stripped from `settings.json` on save and reset to defaults on load, so pop-out etc. can never become a shared default.
   Reset settings also clears a lone image's override; Reset image clears one image's.
 - Output: Format (WebP default, PNG) re-points every item's `outPath` and re-checks existence (`refreshOutPaths`). The WebP quality slider's 100% is sent
   to the encoder as 0.99 (best lossy, like Photoshop); the Lossless box sends a real 1.0, which Chromium encodes as lossless WebP. A saved 0.95 (the old

@@ -367,15 +367,31 @@ async function main() {
   // persists across a restart: put two real frames back on top, then relaunch
   await app.ev(`(__tf.recentFrames = [${J(fC)}, ${J(fB)}, ${J(fA)}], 1)`);
   await app.ev(`__tf.loadFrame(${J(fB)}, { keepOrder: true })`);
-  await app.ev(`(() => { const d = (t) => document.querySelector('#panel > details[data-title="' + t + '"]'); d('Image').open = false; d('Frame').open = true; window.resizeTo(1111, 777); return 1; })()`);
+  const wantH = await app.ev(`(() => { const d = (t) => document.querySelector('#panel > details[data-title="' + t + '"]'); d('Image').open = false; d('Frame').open = true; window.resizeTo(1111, Math.min(777, screen.availHeight - 40)); return Math.min(777, screen.availHeight - 40); })()`);
   await sleep(1300);
   app.close();
   await sleep(800);
   await app.launch();
   const sect = await app.ev(`(() => { const d = (t) => document.querySelector('#panel > details[data-title="' + t + '"]').open; return { image: d('Image'), mask: d('Mask'), frame: d('Frame'), w: window.outerWidth, h: window.outerHeight }; })()`);
-  check('panel sections remember open/closed, window remembers its size', !sect.image && sect.mask && sect.frame && sect.w === 1111 && sect.h === 777, J(sect));
+  check('panel sections remember open/closed, window remembers its size', !sect.image && sect.mask && sect.frame && sect.w === 1111 && sect.h === wantH, J(sect));
   const again = await app.ev(`({ rec: __tf.recentFrames, open: !document.querySelector('#frames').hidden, frame: __tf.frame.name })`);
   check('recent frames and sidebar state survive a restart', J(again.rec) === J([fC, fB, fA]) && again.open && again.frame === 'Frame B ’b’', J(again));
+
+  // -- pop-out is per image: turning it on never becomes a shared default, and an old saved shared value is ignored
+  await app.ev(`__tf.openImages([${J(art)}])`);
+  await sleep(600);
+  const po = await app.ev(`(async () => { const cb = document.querySelector('#panel > details[data-title="Pop-out"] input[type=checkbox]'); cb.click(); await new Promise((r) => setTimeout(r, 900));
+    return { shared: __tf.shared.popOutEnabled, own: __tf.items[__tf.cur].override.popOutEnabled }; })()`);
+  const savedShared = JSON.parse(fs.readFileSync(path.join(userData, 'settings.json'), 'utf8')).shared || {};
+  check('pop-out on a lone image stays on that image and is not saved as a shared default', po.shared === false && po.own === true && savedShared.popOutEnabled !== true, J({ ...po, saved: savedShared.popOutEnabled }));
+  app.close();
+  await sleep(800);
+  const sf = path.join(userData, 'settings.json');
+  const old = JSON.parse(fs.readFileSync(sf, 'utf8'));
+  old.shared = { ...old.shared, popOutEnabled: true };
+  fs.writeFileSync(sf, JSON.stringify(old));
+  await app.launch();
+  check('an old saved shared pop-out-on is ignored at startup', (await app.ev('__tf.shared.popOutEnabled')) === false);
 
   app.close();
 }

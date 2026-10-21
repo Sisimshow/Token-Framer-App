@@ -39,10 +39,12 @@ const baseOf = (p) => p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) 
 
 // ---------------------------------------------------------------- settings
 let persistTimer = 0;
+// Per-image settings (pop-out, cutout tuning) are never saved as shared defaults, so a new session or a new batch always starts with them at their defaults.
+const sharedForSave = () => { const o = { ...state.shared }; for (const k of PER_IMAGE_KEYS) delete o[k]; return o; };
 function persist() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
-    api.setSettings({ shared: state.shared, out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen, sections: state.ui.sections });
+    api.setSettings({ shared: sharedForSave(), out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen, sections: state.ui.sections });
   }, 500);
 }
 
@@ -305,14 +307,14 @@ const PER_IMAGE_KEYS = new Set(['popOutEnabled', 'popOutDegrees', 'popOutRotatio
 /** Switch "Edit this image only" on because a per-image setting changed, and say so (only matters with several images). */
 function enableEditOnly(what) {
   if (!state.editOnly && state.items.length >= 2) setStatus(`"Edit this image only" turned on for ${curItem().base}: its ${what} are now its own. Untick the box to change all images instead.`);
-  state.editOnly = true;
+  state.editOnly = state.items.length >= 2; // the box only exists with several images; a lone image just keeps its own override
 }
 
 function setKey(c, k, v) {
   const scope = c.scope || 'cfg';
   if (scope === 'out') state.out[k] = v;
   else if (scope === 'ui') state.ui[k] = v;
-  else if ((state.editOnly || (PER_IMAGE_KEYS.has(k) && state.items.length >= 2)) && curItem()) {
+  else if ((state.editOnly || PER_IMAGE_KEYS.has(k)) && curItem()) {
     curItem().override[k] = v;
     enableEditOnly(k.startsWith('popOut') ? 'pop-out settings' : 'cutout settings');
   }
@@ -1002,7 +1004,7 @@ async function openImages(paths) {
 async function selectItem(i) {
   state.cur = i;
   const it = curItem();
-  state.editOnly = !!it && Object.keys(it.override).length > 0; // follows the image: on for one that already has its own settings
+  state.editOnly = !!it && state.items.length >= 2 && Object.keys(it.override).length > 0; // follows the image: on for one that already has its own settings
   document.querySelectorAll('.tile').forEach((t, n) => t.classList.toggle('cur', n === i));
   syncControls();
   if (!it) return;
@@ -1306,6 +1308,7 @@ async function init() {
   setup();
   const s = await api.getSettings();
   state.shared = { ...DEFAULTS, ...(s.shared || {}) };
+  for (const k of PER_IMAGE_KEYS) state.shared[k] = DEFAULTS[k]; // older versions saved these as shared defaults (that is how pop-out ended up on for every new image)
   state.out = { ...OUT_DEFAULTS, ...(s.out || {}) };
   if (state.out.quality === 0.95) state.out.quality = 1; // the old default; 100% is the default now
   state.lastDir = s.lastDir || '';
