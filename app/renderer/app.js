@@ -963,7 +963,6 @@ async function setItems(items, skipped = 0) {
   state.cur = -1;
   state.base = null;
   state.cut = null;
-  $('#btnShow').hidden = true;
   const multi = items.length > 1;
   $('#grid').hidden = !multi;
   $('#batchBar').hidden = !multi;
@@ -1123,8 +1122,6 @@ async function writeItem(it, outPath) {
   await api.writeFile(outPath, new Uint8Array(await blob.arrayBuffer()));
   it.tag = 'saved';
   if (outPath === it.outPath) it.exists = true;
-  state.lastOut = outPath;
-  $('#btnShow').hidden = false;
 }
 
 function needFrame() {
@@ -1217,8 +1214,6 @@ async function zipAll() {
   try {
     if (files.length) {
       await api.writeFile(out, makeZip(files));
-      state.lastOut = out;
-      $('#btnShow').hidden = false;
     }
     setStatus(files.length ? `Saved ${files.length} token${files.length === 1 ? '' : 's'} to ${out}${fail ? ` (${fail} failed)` : ''}` : 'Nothing could be rendered.', fail > 0 || !files.length);
   } catch (err) {
@@ -1284,7 +1279,6 @@ function setup() {
   $('#btnZip').onclick = zipAll;
   $('#btnSave').onclick = () => saveCurrent(false);
   $('#btnSaveAs').onclick = () => saveCurrent(true);
-  $('#btnShow').onclick = () => state.lastOut && api.showInFolder(state.lastOut);
   $('#editOnly').onchange = (e) => { state.editOnly = e.target.checked; };
   $('#btnResetImg').onclick = () => { const it = curItem(); if (it) { it.override = {}; state.editOnly = false; it.redo = []; it.editVer++; state.cut = null; syncControls(); schedulePreview(0); updateTile(state.cur); persistEdits(); } };
   $('#btnDefaults').onclick = () => {

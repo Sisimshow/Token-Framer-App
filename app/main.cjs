@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, net, screen } = require('electron');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -176,7 +176,6 @@ ipcMain.handle('fs:exists', async (_e, p) => fs.existsSync(p));
 ipcMain.handle('fs:isDir', async (_e, p) => {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 });
-ipcMain.handle('shell:show', async (_e, p) => { shell.showItemInFolder(p); });
 
 ipcMain.handle('settings:get', async () => {
   try { return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); } catch { return {}; }

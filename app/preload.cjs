@@ -10,7 +10,6 @@ contextBridge.exposeInMainWorld('api', {
   defaultFramePath: () => ipcRenderer.invoke('app:defaultFrame'),
   exists: (p) => ipcRenderer.invoke('fs:exists', p),
   isDirectory: (p) => ipcRenderer.invoke('fs:isDir', p),
-  showInFolder: (p) => ipcRenderer.invoke('shell:show', p),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (data) => ipcRenderer.invoke('settings:set', data),
   getAiStatus: () => ipcRenderer.invoke('ai:status'),
