@@ -118,7 +118,7 @@
         <div class="tsFoot">
           <div id="svReport" class="tsReport"></div>
           <div id="svMsg" class="tsMsg hint">Open the white and the black render of the same frame.</div>
-          <div class="tsBtns"><button id="svReset" title="Put every control back to its default">Reset</button></div>
+          <div class="tsBtns"><button id="svReset" title="Put every control back to its default">Reset</button><button id="svProcess" class="primary" disabled title="Run the pre-clean model on both renders. The preview uses the renders as they are until you press this, and saving waits for it">Process</button></div>
           <div class="tsSaves">
             <button id="svSave" title="Choose where to save the frame as a PNG">Save as…</button>
             <button id="svSaveLoad" class="primary" title="Save the frame as a PNG, then use it as the frame in Token Framer">Save and use as frame</button>
@@ -141,10 +141,12 @@
       <aside class="tsSide">
         <div class="tsControls">
           <div class="row"><label>Model</label><div class="ctl"><select id="icModel"></select></div></div>
+          <div class="row" id="icScaleRow" hidden><label>Upscale by</label><div class="ctl"><select id="icScale" title="The models enlarge 4×. A smaller factor shrinks the 4× result afterwards, so it is still sharp"></select></div></div>
           <div id="icHint" class="hint"></div>
         </div>
         <div class="tsFoot">
           <div id="icMsg" class="tsMsg hint">Open an image to begin.</div>
+          <div class="tsBtns"><button id="icProcess" class="primary" disabled title="Run the model on the image (it can take a while, so nothing happens until you press this)">Process</button></div>
           <div class="tsSaves">
             <button id="icSave" title="Choose where to save the cleaned image as a PNG">Save as…</button>
             <button id="icSaveOpen" class="primary" title="Save the cleaned image as a PNG, then open it in Token Framer as the art image">Save and open as image</button>

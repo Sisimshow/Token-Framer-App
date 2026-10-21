@@ -37,10 +37,10 @@ Personal-use project, largely AI-written.
 - **Tools > Solve frame background…** makes a transparent frame from the same frame image rendered on a white background and on a black one (triangulation matting: the
   transparency is measured, not guessed). Controls: channel mode, alpha floor / ceiling, white and black levels, which render supplies the colours, solidify, trim, resize
   and **Clear the middle** (a fixed circle about half the image width). It warns when the two renders look swapped or do not line up. Same two save buttons as Clean frame.
-  Like the workflow, it first runs both renders through the image-cleanup model (**Clean noise first**, on by default when `app/models` has a model; untick it to skip). Based on the author's ComfyUI "Token Background Solver V2" workflow.
-- **Tools > Clean image…** removes compression noise and artifacts from an *opaque* image with a converted restoration model (1x_PureVision), with a zoomable before/after view.
+  Like the workflow, it can run both renders through the image-cleanup model (**Clean noise first**, on by default when `app/models` has a model; untick it to skip). The preview stays real-time and uses the renders as they are; press **Process** to run the model, and saving waits for it. Based on the author's ComfyUI "Token Background Solver V2" workflow.
+- **Tools > Clean image…** removes compression noise and artifacts from an *opaque* image with a converted restoration model (1x_PureVision), with a zoomable before/after view. Nothing runs when you open an image: press **Process** when you are ready (the models can take a while).
   The model works on RGB only, so it cannot clean an image that already has transparency. Saved as a PNG; **Save and open as image** also opens it in Token Framer.
-- **Tools > Upscale image…** enlarges an *opaque* image 4× with an upscaling model (4x-UltraSharp, 4x-AnimeSharp, 4x-UltraMix_Smooth, the 4x-UltraSharpV2 DAT model) on the same
+- **Tools > Upscale image…** enlarges an *opaque* image 2×, 3× or 4× (default 4×; the models always make 4×, so 2× and 3× shrink the result afterwards) with an upscaling model (4x-UltraSharp, 4x-AnimeSharp, 4x-UltraMix_Smooth, the 4x-UltraSharpV2 DAT model) on the same
   screen as Clean image; saved as a PNG.
 - **Converted image models** (used by Clean image, Upscale image and the solvers' pre-clean) live in `app/models/`: five at the moment, 1x_PureVision, 4x-UltraSharp, 4x-AnimeSharp,
   4x-UltraMix_Smooth and 4x-UltraSharpV2. The large `.onnx` files are not tracked by git; each comes with a small `<name>.json` (scale and size rules) that is tracked and must stay

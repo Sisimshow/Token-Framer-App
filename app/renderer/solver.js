@@ -54,8 +54,31 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
   const setMsg = (text, warn = false) => { const m = $('#svMsg'); m.textContent = text; m.style.color = warn ? 'var(--warn)' : ''; };
   const toCanvas = (rgba, w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0); return c; };
 
-  /** The pre-clean is in effect: a model exists, the box is ticked and a model is chosen. */
+  /** The pre-clean is wanted: a model exists, the box is ticked and a model is chosen. */
   const usePre = () => models.length > 0 && !!params.preClean && !!params.preCleanModel;
+  /** The pre-clean has been run (Process) on both renders with the chosen model, so the preview and the export use the cleaned copies. Until then they use the renders as they are. */
+  const cleanedNow = () => usePre() && !!slots.white && !!slots.black && slots.white.cleanKey === params.preCleanModel && slots.black.cleanKey === params.preCleanModel;
+  let cleaning = false, saving = false;
+  /** Process is for the pre-clean only; saving waits for it when the pre-clean is wanted, so what is saved is what Process produced. */
+  function refreshButtons() {
+    const both = !!(slots.white && slots.black);
+    $('#svProcess').disabled = !both || !usePre() || cleanedNow() || cleaning;
+    $('#svSave').disabled = $('#svSaveLoad').disabled = !both || saving || cleaning || (usePre() && !cleanedNow());
+  }
+  /** The "Process" button: runs the pre-clean model over both renders, then re-solves with the cleaned copies. */
+  async function processClicked() {
+    if (cleaning || !usePre()) return;
+    cleaning = true; refreshButtons();
+    try {
+      await ensureCleanBoth();
+      if (!cleanedNow()) setMsg('The renders or the model changed while processing. Press Process again.', true);
+    } catch (err) {
+      setMsg(`Could not process the renders: ${err.message}`, true);
+    } finally {
+      cleaning = false; refreshButtons();
+    }
+    if (cleanedNow()) await run();
+  }
   const preferredModel = () => (models.includes('1x_PureVision') ? '1x_PureVision' : models[0] || '');
 
   /**
@@ -84,6 +107,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
 
   function changed(k) {
     ui.sync();
+    refreshButtons();
     if (k === 'resize' || k === 'size' || k === 'clearMiddle') { updateInfo(); redraw(); return; } // only the export (and the middle overlay) is affected
     schedule();
   }
@@ -119,11 +143,8 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
     try {
       do {
         dirty = false;
-        let cleanNote = '';
-        try { await ensureCleanBoth(); } catch (err) { cleanNote = `Pre-clean failed (${err.message}); using the renders as they are.`; }
         setMsg('Processing…');
-        const r = await ask({ type: 'preview', params: { ...params, preClean: usePre() } });
-        r.cleanNote = cleanNote;
+        const r = await ask({ type: 'preview', params: { ...params, preClean: cleanedNow() } }); // real time: the model is not run here, only after Process
         result = r;
         resultCanvas = toCanvas(r.rgba, r.w, r.h);
         updateInfo(r.ms);
@@ -143,7 +164,8 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
     if (!result) return;
     const out = params.resize === 'none' ? `${result.w}×${result.h}` : `${params.size}×${params.size}`;
     const pre = result.usedClean ? `, pre-cleaned with ${params.preCleanModel}` : '';
-    setMsg(`${mode === 'image' ? `Solved ${result.w}×${result.h}` : `Trimmed to ${result.w}×${result.h} (from ${slots.white.w}×${slots.white.h}), output ${out}`}${pre}${ms != null ? `, ${ms} ms` : ''}${result.cleanNote ? `. ${result.cleanNote}` : ''}`, !!result.cleanNote);
+    const wait = usePre() && !cleanedNow() ? ' Press Process to clean the noise first: this preview uses the renders as they are.' : '';
+    setMsg(`${mode === 'image' ? `Solved ${result.w}×${result.h}` : `Trimmed to ${result.w}×${result.h} (from ${slots.white.w}×${slots.white.h}), output ${out}`}${pre}${ms != null ? `, ${ms} ms` : ''}.${wait}`, false);
   }
   function showReport(r) {
     const box = $('#svReport');
@@ -158,7 +180,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
     if (r.blown > 0.01) line(`${(r.blown * 100).toFixed(1)}% of pixels are pure white in both renders; those cannot be separated from the background.`, true);
   }
   function redraw() {
-    if (view === 'white' || view === 'black') { const s = slots[view]; drawInSquare(ctx, S, s && usePre() && s.cleanKey === params.preCleanModel && s.cleanCanvas ? s.cleanCanvas : s?.canvas, 'fit', fitRect); return; }
+    if (view === 'white' || view === 'black') { const s = slots[view]; drawInSquare(ctx, S, s && cleanedNow() && s.cleanCanvas ? s.cleanCanvas : s?.canvas, 'fit', fitRect); return; }
     const f = drawInSquare(ctx, S, resultCanvas, params.resize, fitRect);
     if (f && params.clearMiddle && maskAlpha) { // preview the cut: the mask covers the whole output square (or the image itself when it is not resized)
       const r = params.resize === 'none' ? f : { x: 0, y: 0, w: S, h: S };
@@ -180,7 +202,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
       label.textContent = p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) + 1);
       label.title = p;
       label.classList.remove('muted');
-      enableSave(!!(slots.white && slots.black));
+      refreshButtons();
       await ensureMask();
       redraw();
       if (slots.white && slots.black) await run();
@@ -193,13 +215,12 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
     const picked = await api.pickImages({ multi: false });
     if (picked?.length) await loadSlot(slot, picked[0]);
   }
-  function enableSave(on) { $('#svSave').disabled = $('#svSaveLoad').disabled = !on; }
 
   async function saveTo(outPath) {
     if (!slots.white || !slots.black) throw new Error('Open both renders first');
     await ensureMask();
     try { await ensureCleanBoth(); } catch { /* the export then uses the raw renders, as the preview does */ }
-    const r = await ask({ type: 'export', params: { ...params, preClean: usePre() } });
+    const r = await ask({ type: 'export', params: { ...params, preClean: cleanedNow() } });
     await api.writeFile(outPath, r.png);
     return { path: outPath, w: r.w, h: r.h, bytes: r.png.length };
   }
@@ -216,7 +237,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
     let out = await api.pickSave(defaultName(), 'png');
     if (!out) return;
     if (!/\.png$/i.test(out)) out += '.png';
-    enableSave(false);
+    saving = true; refreshButtons();
     try {
       setMsg('Saving…');
       const r = await saveTo(out);
@@ -225,7 +246,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
     } catch (err) {
       setMsg(`Could not save: ${err.message}`, true);
     } finally {
-      enableSave(true);
+      saving = false; refreshButtons();
     }
   }
 
@@ -248,6 +269,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
       builtFor = key;
     }
     ui.sync();
+    refreshButtons();
     ensureMask().catch((err) => setMsg(`Could not load the middle mask: ${err.message}`, true));
     redraw();
     if (switched && slots.white && slots.black) schedule(); // the same pair, solved the other way
@@ -259,7 +281,8 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
   $('#svClose').onclick = close;
   $('#svSave').onclick = () => saveClicked(false);
   $('#svSaveLoad').onclick = () => saveClicked(true);
-  $('#svReset').onclick = () => { Object.assign(params, SOLVE_DEFAULTS, mode === 'image' ? IMAGE_OVERRIDES : {}); params.preCleanModel = preferredModel(); ui?.sync(); updateInfo(); redraw(); schedule(); };
+  $('#svReset').onclick = () => { Object.assign(params, SOLVE_DEFAULTS, mode === 'image' ? IMAGE_OVERRIDES : {}); params.preCleanModel = preferredModel(); ui?.sync(); refreshButtons(); updateInfo(); redraw(); schedule(); };
+  $('#svProcess').onclick = processClicked;
   $('#svView').onchange = (e) => { view = e.target.value; redraw(); };
   root.addEventListener('dragover', (e) => e.preventDefault());
   root.addEventListener('drop', async (e) => { // not stopped: the window-level handler must still clear the drag highlight
@@ -276,12 +299,15 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
     }
   });
   api.onModelProgress(({ done, total, id }) => { const slot = jobs.get(id); if (slot && total > 1) setMsg(`Processing the ${slot} render… tile ${done} of ${total}`); });
-  enableSave(false);
+  refreshButtons();
 
   return {
     open, close, isOpen, loadSlot, saveTo,
     get params() { return params; },
-    setParams(p) { Object.assign(params, p); ui?.sync(); updateInfo(); redraw(); return run(); },
+    setParams(p) { Object.assign(params, p); ui?.sync(); refreshButtons(); updateInfo(); redraw(); return run(); },
+    /** For tests: what the Process button does (resolves when the pre-clean and the re-solve are done). */
+    process: processClicked,
+    get buttons() { return { process: !$('#svProcess').disabled, save: !$('#svSave').disabled }; },
     get result() { return result; },
     get mode() { return mode; },
     get cleanState() { return { white: slots.white?.cleanKey || null, black: slots.black?.cleanKey || null, used: result?.usedClean ?? null, models: [...models] }; },

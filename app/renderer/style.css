@@ -124,3 +124,4 @@ label.check { display: flex; align-items: center; gap: 6px; }
 .tsView .badge { position: absolute; left: 16px; top: 16px; background: rgba(0,0,0,.6); border-radius: 3px; padding: 1px 6px; font-size: 12px; pointer-events: none; }
 .tsReport { color: var(--muted); font-size: 12px; white-space: pre-line; }
 .tsReport .warn { color: var(--warn); }
+#icProcess { flex: 1; }

@@ -2,6 +2,7 @@
 // with a before/after view. One screen, two modes: the mode only decides which models are offered and how things are named.
 // The models see RGB only, so an image that already has transparency cannot be processed and is refused. Inference runs in the main process (onnxruntime-node).
 import { fitRect } from './lib/cleanframe.js';
+import { makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 
@@ -13,7 +14,9 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   let models = [], model = '', mode = 'clean';   // mode: 'clean' (1x models) or 'upscale' (Nx models)
   const modeModels = () => models.filter((m) => (mode === 'upscale' ? m.scale > 1 : m.scale === 1));
   let src = null;                       // { path, name, w, h, rgba, canvas, opaque }
-  let cleanedCanvas = null, info = null, showOriginal = false, busy = false, dirty = false, currentJob = '';
+  let cleanedCanvas = null, info = null, showOriginal = false, busy = false, currentJob = '';
+  let scale = 4, raw = null, applyReq = 0;   // scale: the chosen upscale factor; raw: the model's own output ({rgba,w,h,scale,ms,provider,job,name}), kept so a smaller factor needs no second model run
+  const resizer = makeRpc('lib/resize.worker.js', (m) => setMsg(`The resize worker stopped: ${m}`, true));
   const view = { z: 1, x: 0, y: 0 };    // zoom and pan of the preview (canvas pixels)
 
   const setMsg = (text, warn = false) => { const m = $('#icMsg'); m.textContent = text; m.style.color = warn ? 'var(--warn)' : ''; };
@@ -31,7 +34,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, f.x, f.y, f.w, f.h);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    $('#icBadge').textContent = src ? `${showOriginal || !cleanedCanvas ? 'Original' : 'Cleaned'}${view.z > 1 ? ` · ${Math.round(view.z * 100)}%` : ''}` : '';
+    $('#icBadge').textContent = src ? `${showOriginal || !cleanedCanvas ? 'Original' : mode === 'upscale' ? 'Upscaled' : 'Cleaned'}${view.z > 1 ? ` · ${Math.round(view.z * 100)}%` : ''}` : '';
   }
   const resetView = () => { view.z = 1; view.x = 0; view.y = 0; redraw(); };
   const toCanvasPoint = (e) => { const r = canvas.getBoundingClientRect(); return { x: ((e.clientX - r.left) / r.width) * S, y: ((e.clientY - r.top) / r.height) * S }; };
@@ -61,8 +64,25 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     for (const m of list) { const o = document.createElement('option'); o.value = m.name; o.textContent = m.scale > 1 ? `${m.name} (${m.scale}×)` : m.name; sel.append(o); }
     if (!list.some((m) => m.name === model)) model = (mode === 'upscale' && list.find((m) => m.name === '4x-UltraSharpV2')?.name) || list[0]?.name || ''; // the Upscale (Basic) workflow's default
     sel.value = model;
+    refreshScales();
     if (!list.length) setMsg(`No ${mode === 'upscale' ? 'upscaling' : 'cleanup'} models found. Convert one with tools/convert-model.py (see the README) and put the .onnx file in the models folder.`, true);
   }
+
+  /** The factors offered for the chosen model: 2, 3 and 4 up to the model's own scale (a smaller factor is made by shrinking the model's output). Only shown in upscale mode. */
+  function refreshScales() {
+    const ms = models.find((m) => m.name === model)?.scale || 1;
+    const opts = [2, 3, 4].filter((n) => n <= ms);
+    if (ms > 4) opts.push(ms);
+    $('#icScaleRow').hidden = mode !== 'upscale' || !opts.length;
+    const sel = $('#icScale');
+    sel.textContent = '';
+    for (const n of opts) { const o = document.createElement('option'); o.value = n; o.textContent = `${n}×`; sel.append(o); }
+    if (!opts.includes(scale)) scale = opts.includes(4) ? 4 : opts[opts.length - 1] || ms;
+    sel.value = scale;
+  }
+  const readyMsg = () => (src?.opaque && model ? `Press Process to ${mode === 'upscale' ? 'upscale' : 'clean'} the image with ${model}${mode === 'upscale' ? ` (${scale}×)` : ''}.` : '');
+  /** Process is available once there is an opaque image and a model; saving once there is a result. Both wait while a job runs. */
+  const refreshButtons = () => { $('#icProcess').disabled = busy || !(src && src.opaque && model); $('#icSave').disabled = $('#icSaveOpen').disabled = busy || !cleanedCanvas; };
 
   // ---------------------------------------------------------------- loading and cleaning
   let loadReq = 0;
@@ -85,9 +105,9 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
       const label = $('#icName');
       label.textContent = p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) + 1);
       label.title = p; label.classList.remove('muted');
-      enableSave(false);
+      refreshButtons();
       if (!opaque) { setMsg('This image already has transparency. The cleanup model works on RGB only, so it cannot clean images with transparency. Use an opaque image, for example a render on a solid background.', true); return; }
-      await run();
+      setMsg(`${src.w}×${src.h} loaded. ${readyMsg()}`);
     } catch (err) {
       setMsg(`Could not open that image: ${err.message}`, true);
     }
@@ -97,36 +117,46 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     if (picked?.length) await loadPath(picked[0]);
   }
 
-  /** Cleans the current image with the current model. If another image or model is chosen while a job runs, that job's result is thrown away and the newest request runs next. */
+  /** Runs the chosen model over the current image (only when Process is pressed: the models can take a while). If another image or model is chosen meanwhile, the result is thrown away. */
   async function run() {
-    if (busy) { dirty = true; return; }
+    const job = src, name = model;
+    if (busy || !job || !job.opaque || !name) return;
     busy = true;
+    cleanedCanvas = null; info = null; raw = null;
+    refreshButtons(); redraw();
     try {
-      do {
-        dirty = false;
-        const job = src, name = model;
-        if (!job || !job.opaque || !name) break;
-        enableSave(false);
-        setMsg('Processing…');
-        let r;
-        try {
-          const rgba = new Uint8Array(job.rgba.buffer.slice(job.rgba.byteOffset, job.rgba.byteOffset + job.rgba.byteLength)); // a copy, the original stays for the before view
-          currentJob = `ic-${crypto.randomUUID()}`;
-          r = await api.cleanImage(name, rgba, job.w, job.h, currentJob);
-        } catch (err) {
-          if (job === src && name === model) setMsg(`Could not process the image: ${err.message}`, true);
-          continue;
-        }
-        if (job !== src || name !== model) { dirty = true; continue; } // superseded while it ran: never show it
-        cleanedCanvas = toCanvas(new Uint8ClampedArray(r.rgba.buffer, r.rgba.byteOffset, r.rgba.byteLength), r.w, r.h);
-        info = { ms: r.ms, provider: r.provider, w: r.w, h: r.h, scale: r.scale };
-        setMsg(`${r.scale > 1 ? `Upscaled ${job.w}×${job.h} to ${r.w}×${r.h}` : `Cleaned ${job.w}×${job.h}`} with ${name} in ${(r.ms / 1000).toFixed(2)} s on ${r.provider}. Scroll to zoom, drag to pan, double-click to reset.`);
-        enableSave(true);
-        redraw();
-      } while (dirty);
+      setMsg('Processing…');
+      const rgba = new Uint8Array(job.rgba.buffer.slice(job.rgba.byteOffset, job.rgba.byteOffset + job.rgba.byteLength)); // a copy, the original stays for the before view
+      currentJob = `ic-${crypto.randomUUID()}`;
+      const r = await api.cleanImage(name, rgba, job.w, job.h, currentJob);
+      if (job !== src || name !== model) { setMsg(`The image or model changed while processing. ${readyMsg()}`); return; } // superseded: never show it
+      raw = { rgba: new Uint8ClampedArray(r.rgba.buffer, r.rgba.byteOffset, r.rgba.byteLength), w: r.w, h: r.h, scale: r.scale, ms: r.ms, provider: r.provider, job, name };
+      await applyScale();
+    } catch (err) {
+      if (job === src && name === model) setMsg(`Could not process the image: ${err.message}`, true);
     } finally {
       busy = false;
+      refreshButtons();
     }
+  }
+  /** Turns the model's raw output into the shown result at the chosen factor: as is, or shrunk (Lanczos, in a worker) when a smaller factor than the model's is wanted. */
+  async function applyScale() {
+    const r = raw, req = ++applyReq;
+    if (!r || r.job !== src || r.name !== model) return;
+    const target = mode === 'upscale' ? Math.min(scale, r.scale) : r.scale;
+    let rgba = r.rgba, w = r.w, h = r.h;
+    if (target !== r.scale) {
+      setMsg(`Scaling the ${r.scale}× result to ${target}×…`);
+      const buf = r.rgba.slice().buffer; // a copy goes to the worker, the full-size result stays for other factors
+      const out = await resizer.ask({ type: 'resize', rgba: buf, sw: r.w, sh: r.h, dw: r.job.w * target, dh: r.job.h * target }, [buf]);
+      if (req !== applyReq || r !== raw) return; // a newer factor or image took over
+      rgba = out.rgba; w = out.w; h = out.h;
+    }
+    cleanedCanvas = toCanvas(rgba, w, h);
+    info = { ms: r.ms, provider: r.provider, w, h, scale: target };
+    setMsg(`${target > 1 ? `Upscaled ${r.job.w}×${r.job.h} to ${w}×${h}` : `Cleaned ${r.job.w}×${r.job.h}`} with ${r.name} in ${(r.ms / 1000).toFixed(2)} s on ${r.provider}. Scroll to zoom, drag to pan, double-click to reset.`);
+    refreshButtons();
+    redraw();
   }
   api.onModelProgress(({ done, total, id }) => { if (busy && id === currentJob && total > 1) setMsg(`Processing… tile ${done} of ${total}`); });
 
@@ -140,8 +170,8 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     return { path: outPath, w: cleanedCanvas.width, h: cleanedCanvas.height, bytes: bytes.length };
   }
   function defaultName() {
-    const scale = models.find((m) => m.name === model)?.scale || 1;
-    const name = `${src?.name || 'Image'} (${scale > 1 ? `${scale}x` : 'clean'}).png`;
+    const factor = info?.scale || 1;
+    const name = `${src?.name || 'Image'} (${factor > 1 ? `${factor}x` : 'clean'}).png`;
     return src?.path ? `${dirOf(src.path)}${sepOf(src.path)}${name}` : name;
   }
   async function saveClicked(andOpen) {
@@ -167,14 +197,15 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   /** mode 'clean' offers the 1x models, 'upscale' the Nx ones; switching mode drops the loaded image's result. */
   async function open(nextMode = mode) {
     root.hidden = false;
-    if (nextMode !== mode) { mode = nextMode; cleanedCanvas = null; info = null; model = ''; enableSave(false); }
+    if (nextMode !== mode) { mode = nextMode; cleanedCanvas = null; info = null; raw = null; model = ''; }
     $('#icTitle').textContent = mode === 'upscale' ? 'Upscale image' : 'Clean image';
     $('#icHint').textContent = mode === 'upscale'
       ? 'An upscaler enlarges an opaque image 2× or 4× and adds detail. The models work on RGB only, so they cannot process an image that already has transparency. Saved as a PNG.'
       : 'The model works on RGB only: it cleans opaque images (for example a render on a solid background) and cannot clean an image that already has transparency. Saved as a PNG.';
     try { await refreshModels(); } catch (err) { setMsg(`Could not list models: ${err.message}`, true); }
+    refreshButtons();
     redraw();
-    if (src && src.opaque && !cleanedCanvas) run(); // an image already loaded in the other mode is processed with this mode's model
+    if (src?.opaque && !cleanedCanvas && !busy) setMsg(readyMsg()); // an image already loaded in the other mode waits for Process with this mode's model
   }
   function close() { root.hidden = true; }
 
@@ -182,7 +213,13 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   $('#icClose').onclick = close;
   $('#icSave').onclick = () => saveClicked(false);
   $('#icSaveOpen').onclick = () => saveClicked(true);
-  $('#icModel').onchange = (e) => { model = e.target.value; cleanedCanvas = null; enableSave(false); run(); };
+  $('#icProcess').onclick = run;
+  $('#icModel').onchange = (e) => { model = e.target.value; cleanedCanvas = null; info = null; raw = null; refreshScales(); refreshButtons(); redraw(); if (src?.opaque) setMsg(readyMsg()); };
+  $('#icScale').onchange = async (e) => { // a result from the same model is resized on the spot; otherwise the new factor waits for Process
+    scale = +e.target.value;
+    if (raw && raw.job === src && raw.name === model) { try { await applyScale(); } catch (err) { setMsg(`Could not scale the result: ${err.message}`, true); } }
+    else if (src?.opaque) setMsg(readyMsg());
+  };
   $('#icOriginal').onchange = (e) => { showOriginal = e.target.checked; redraw(); };
   root.addEventListener('dragover', (e) => e.preventDefault());
   root.addEventListener('drop', async (e) => { // not stopped, so the window-level handler still clears the drag highlight
@@ -191,10 +228,14 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     const p = f && api.pathForFile(f);
     if (p) await loadPath(p);
   });
-  enableSave(false);
+  refreshButtons();
 
   return {
     open, close, isOpen, loadPath, saveTo, refreshModels,
+    /** For tests: what the Process button does (resolves when the job is done). */
+    process: run,
+    get scale() { return scale; },
+    setScale(n) { const sel = $('#icScale'); sel.value = n; return sel.onchange({ target: sel }); },
     get info() { return info; },
     get opaque() { return src ? src.opaque : null; },
     get model() { return model; },

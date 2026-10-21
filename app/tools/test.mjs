@@ -233,6 +233,7 @@ async function main() {
       const toolBefore = __tf.tool; window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' })); await wait(80); o.keysIgnored = __tf.tool === toolBefore;
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await wait(80); o.escCloses = q('#solver').hidden; __tf.solver.open();
       await __tf.solver.setParams({ resize: 'stretch', size: 256 });
+      await __tf.solver.process();                                  // with a cleanup model installed, saving waits for Process
       o.saveOn = !q('#svSave').disabled;
       return o;
     })()`);
@@ -260,15 +261,18 @@ async function main() {
         const sv = __tf.solver; await sv.open(); await wait(300);
         const o = { checkbox: !!document.querySelector('#svControls input[type=checkbox]'), defaultOn: sv.params.preClean === true, model: sv.params.preCleanModel };
         await sv.loadSlot('white', ${J(nw)}); await sv.loadSlot('black', ${J(nb)});
-        for (let i = 0; i < 100 && sv.cleanState.used !== true; i++) await wait(100);
-        o.on = sv.cleanState; const a = Array.from(sv.result.rgba);
-        await sv.setParams({ preClean: false }); o.off = sv.cleanState; const b = Array.from(sv.result.rgba);
+        o.before = { state: sv.cleanState, buttons: sv.buttons, msg: document.querySelector('#svMsg').textContent.includes('Press Process') }; const rawPx = Array.from(sv.result.rgba);   // real-time preview: the model has not run yet
+        await sv.process();
+        o.on = sv.cleanState; o.after = sv.buttons; const a = Array.from(sv.result.rgba);
+        await sv.setParams({ preClean: false }); o.off = sv.cleanState; o.offButtons = sv.buttons; const b = Array.from(sv.result.rgba);
         await sv.setParams({ preClean: true }); o.again = sv.cleanState;
         o.differs = a.length === b.length ? a.reduce((n, v, i) => n + (v !== b[i] ? 1 : 0), 0) : -1;
+        o.rawIsOff = rawPx.length === b.length && rawPx.every((v, i) => v === b[i]);
         sv.close();
         return o;
       })()`);
       check('Solve frame pre-clean: on by default with the model, both renders cleaned, the result changes with the option and is restored when it is turned back on', pre.checkbox && pre.defaultOn && pre.model === '1x_PureVision' && pre.on.white === '1x_PureVision' && pre.on.black === '1x_PureVision' && pre.on.used === true && pre.off.used === false && pre.again.used === true && pre.differs !== 0, J(pre));
+      check('Solve frame pre-clean: loading only previews the raw renders (no model run, Save waits); Process cleans both, enables Save, and the preview then changes', pre.before.state.white === null && pre.before.state.black === null && pre.before.state.used === false && pre.before.buttons.process && !pre.before.buttons.save && pre.before.msg && pre.rawIsOff && pre.after.save && !pre.after.process && pre.offButtons.save && !pre.offButtons.process, J({ before: pre.before, after: pre.after, off: pre.offButtons, rawIsOff: pre.rawIsOff }));
     }
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
   }
@@ -321,14 +325,16 @@ async function main() {
       const o = { open: !q('#imgclean').hidden, menuClosed: q('#toolsMenu').hidden, models: [...q('#icModel').options].map((x) => x.value), saveOff: q('#icSave').disabled };
       await __tf.imgclean.loadPath(${J(seeThroughP)}); await wait(200);
       o.refused = { opaque: __tf.imgclean.opaque, cleaned: !!__tf.imgclean.cleaned, saveOff: q('#icSave').disabled, msg: q('#icMsg').textContent.slice(0, 60) };
-      await __tf.imgclean.loadPath(${J(noisyP)});
-      for (let i = 0; i < 100 && !__tf.imgclean.cleaned; i++) await wait(100);
+      await __tf.imgclean.loadPath(${J(noisyP)}); await wait(300);
+      o.waiting = { cleaned: !!__tf.imgclean.cleaned, processOn: !q('#icProcess').disabled, saveOff: q('#icSave').disabled, msg: q('#icMsg').textContent.includes('Press Process'), scaleRow: !q('#icScaleRow').hidden };   // nothing runs until Process is pressed
+      await __tf.imgclean.process();
       const a = __tf.imgclean.original, b = __tf.imgclean.cleaned;
       if (b) { const da = a.getContext('2d').getImageData(0, 0, a.width, a.height).data, db = b.getContext('2d').getImageData(0, 0, b.width, b.height).data; let sum = 0, alpha = true; for (let i = 0; i < da.length; i += 4) { for (let c = 0; c < 3; c++) sum += Math.abs(da[i + c] - db[i + c]); if (db[i + 3] !== 255) alpha = false; }
         o.clean = { w: b.width, h: b.height, meanChange: +(sum / (da.length / 4 * 3)).toFixed(2), alphaKept: alpha, provider: __tf.imgclean.info.provider, ms: __tf.imgclean.info.ms }; }
       o.saveOn = !q('#icSave').disabled;
       return o;
     })()`);
+    check('Clean image: a loaded image waits for the Process button (no model run, no scale row), then Process cleans it', r.waiting.cleaned === false && r.waiting.processOn && r.waiting.saveOff && r.waiting.msg && !r.waiting.scaleRow && !!r.clean, J(r.waiting));
     check('Clean image: opens from Tools, lists the model, refuses an image with transparency', r.open && r.menuClosed && r.models.includes('1x_PureVision') && r.saveOff && r.refused.opaque === false && !r.refused.cleaned && r.refused.saveOff && /transparency/.test(r.refused.msg), J({ open: r.open, models: r.models, refused: r.refused }));
     check('Clean image: the real model cleans an opaque image at the same size and the picture changes', r.clean && r.clean.w === 330 && r.clean.h === 222 && r.clean.meanChange > 0.5 && r.clean.alphaKept && r.saveOn, J(r.clean));
     const saved = await app.ev(`__tf.imgclean.saveAndOpen(${J(cleanP)})`);
@@ -345,10 +351,13 @@ async function main() {
       await save(mk(330, 222, false), ${J(noisyP)}); await save(mk(200, 120, false), ${J(smallP)}); await save(mk(64, 64, true), ${J(seeThroughP)});
       const o = {};
       await __tf.imgclean.open(); await wait(200);
-      __tf.imgclean.loadPath(${J(noisyP)});                       // not awaited: still cleaning when the next image arrives
+      await __tf.imgclean.loadPath(${J(noisyP)});
+      const job = __tf.imgclean.process();                         // not awaited: still processing when the next image arrives
+      await wait(50);
       await __tf.imgclean.loadPath(${J(smallP)});
-      for (let i = 0; i < 100 && !__tf.imgclean.cleaned; i++) await wait(100);
-      await wait(1200);                                            // let any stale job finish and be (wrongly) shown
+      await job; await wait(1200);                                 // let the stale job finish and be (wrongly) shown
+      o.stale = { cleaned: !!__tf.imgclean.cleaned, saveOff: q('#icSave').disabled, processOn: !q('#icProcess').disabled };
+      await __tf.imgclean.process();
       o.size = { w: __tf.imgclean.cleaned?.width, h: __tf.imgclean.cleaned?.height, infoW: __tf.imgclean.info?.w, saveOn: !q('#icSave').disabled };
       __tf.imgclean.loadPath(${J(smallP)});
       await __tf.imgclean.loadPath(${J(seeThroughP)});
@@ -357,7 +366,7 @@ async function main() {
       __tf.imgclean.close();
       return o;
     })()`);
-    check('Clean image: a result never lands on a different image chosen while it was cleaning', race.size.w === 200 && race.size.h === 120 && race.size.infoW === 200 && race.size.saveOn && race.transparent.cleaned === false && race.transparent.saveOff && race.transparent.opaque === false, J(race));
+    check('Clean image: a result never lands on a different image chosen while it was cleaning', race.stale.cleaned === false && race.stale.saveOff && race.stale.processOn && race.size.w === 200 && race.size.h === 120 && race.size.infoW === 200 && race.size.saveOn && race.transparent.cleaned === false && race.transparent.saveOff && race.transparent.opaque === false, J(race));
     await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art back for the checks that follow
   }
 
@@ -376,22 +385,39 @@ async function main() {
       await save(mk(false), ${J(smallP)}); await save(mk(true), ${J(glassP)});
       q('#btnTools').click(); await wait(80); q('#btnUpscaleImage').click(); await wait(300);
       const o = { open: !q('#imgclean').hidden, mode: __tf.imgclean.mode, title: q('#icTitle').textContent, models: [...q('#icModel').options].map((x) => x.value) };
-      await __tf.imgclean.loadPath(${J(smallP)});
-      for (let i = 0; i < 150 && !__tf.imgclean.cleaned; i++) await wait(100);
+      await __tf.imgclean.loadPath(${J(smallP)}); await wait(300);
+      o.waiting = { cleaned: !!__tf.imgclean.cleaned, processOn: !q('#icProcess').disabled, saveOff: q('#icSave').disabled, scale: __tf.imgclean.scale, row: !q('#icScaleRow').hidden, opts: [...q('#icScale').options].map((x) => x.value) };
+      await __tf.imgclean.process();
       const c = __tf.imgclean.cleaned; o.out = c ? [c.width, c.height] : null; o.info = __tf.imgclean.info; o.saveOn = !q('#icSave').disabled;
       await __tf.imgclean.loadPath(${J(glassP)}); await wait(300);
       o.refused = { opaque: __tf.imgclean.opaque, cleaned: !!__tf.imgclean.cleaned, saveOff: q('#icSave').disabled };
-      await __tf.imgclean.loadPath(${J(smallP)});
-      for (let i = 0; i < 150 && !__tf.imgclean.cleaned; i++) await wait(100);
+      await __tf.imgclean.loadPath(${J(smallP)}); await __tf.imgclean.process();
       return o;
     })()`);
+    check('Upscale image: a loaded image waits for Process; the factor defaults to 4x and offers 2x, 3x, 4x', u.waiting.cleaned === false && u.waiting.processOn && u.waiting.saveOff && u.waiting.scale === 4 && u.waiting.row && J(u.waiting.opts) === J(['2', '3', '4']), J(u.waiting));
     check('Upscale image: opens in upscale mode with only the Nx models, a 4x model makes the picture 4x larger, transparency is refused', u.open && u.mode === 'upscale' && u.title === 'Upscale image' && u.models.length >= 2 && u.models.every((m) => /^4x/.test(m)) && !u.models.includes('1x_PureVision') && u.out && u.out[0] === 480 && u.out[1] === 320 && u.info.scale === 4 && u.saveOn && u.refused.opaque === false && !u.refused.cleaned && u.refused.saveOff, J(u));
     const saved = await app.ev(`__tf.imgclean.saveTo(${J(upP)})`);
     const magic = fs.existsSync(upP) ? fs.readFileSync(upP).subarray(0, 4).toString('hex') : '';
     const back = await app.ev(`(async () => { const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(upP)})])); return [bm.width, bm.height]; })()`);
     check('Upscale image: the saved file is a 480x320 PNG named with the scale', magic === '89504e47' && saved.w === 480 && J(back) === J([480, 320]) && /Tiny \(4x\)\.png$/.test(saved.path), J({ magic, saved: saved.w, back }));
-    const switched = await app.ev(`(async () => { await __tf.imgclean.open('clean'); const o = { mode: __tf.imgclean.mode, models: [...document.querySelector('#icModel').options].map((x) => x.value) }; __tf.imgclean.close(); return o; })()`);
-    check('Clean image mode after upscale lists only the 1x models', switched.mode === 'clean' && switched.models.includes('1x_PureVision') && switched.models.every((m) => /^1x/.test(m)), J(switched));
+    // the factor: 2x and 3x shrink the model's 4x result (exactly the Lanczos resize of it, no second model run), and 4x comes straight back
+    const sc = await app.ev(`(async () => {
+      const { resizeLanczos } = await import('./lib/cleanframe.js'); const ic = __tf.imgclean; const o = {}; const q = (x) => document.querySelector(x);
+      const px = (c) => c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      const four = px(ic.cleaned), t0 = ic.info.ms;
+      await ic.setScale(2); o.two = [ic.cleaned.width, ic.cleaned.height, ic.info.scale, ic.info.ms === t0];
+      const want = resizeLanczos(four, 480, 320, 240, 160), got = px(ic.cleaned); o.maxDiff = 0; for (let i = 0; i < want.length; i++) o.maxDiff = Math.max(o.maxDiff, Math.abs(want[i] - got[i]));
+      await ic.setScale(3); o.three = [ic.cleaned.width, ic.cleaned.height, ic.info.scale];
+      o.saveOn = !q('#icSave').disabled;
+      o.threeSaved = await ic.saveTo(${J(path.join(work, 'Tiny (3x).png'))});
+      await ic.setScale(4); o.four = [ic.cleaned.width, ic.cleaned.height, ic.info.scale];
+      const m = q('#icModel'); m.selectedIndex = (m.selectedIndex + 1) % m.options.length; m.onchange({ target: m });
+      o.afterModel = { cleaned: !!ic.cleaned, saveOff: q('#icSave').disabled, processOn: !q('#icProcess').disabled };
+      return o;
+    })()`);
+    check('Upscale image: 2x and 3x shrink the 4x result (identical to the Lanczos resize of it, same model run), 4x restores it, and changing the model asks for Process again', J(sc.two) === J([240, 160, 2, true]) && sc.maxDiff === 0 && J(sc.three) === J([360, 240, 3]) && sc.saveOn && sc.threeSaved.w === 360 && J(sc.four) === J([480, 320, 4]) && sc.afterModel.cleaned === false && sc.afterModel.saveOff && sc.afterModel.processOn, J(sc));
+    const switched = await app.ev(`(async () => { await __tf.imgclean.open('clean'); const o = { mode: __tf.imgclean.mode, rowHidden: document.querySelector('#icScaleRow').hidden, models: [...document.querySelector('#icModel').options].map((x) => x.value) }; __tf.imgclean.close(); return o; })()`);
+    check('Clean image mode after upscale lists only the 1x models and has no factor row', switched.mode === 'clean' && switched.rowHidden && switched.models.includes('1x_PureVision') && switched.models.every((m) => /^1x/.test(m)), J(switched));
   }
 
   // -- Auto center anchors: top keeps the art's top edge fixed while Scale x changes, bottom keeps the bottom edge, centre the middle
