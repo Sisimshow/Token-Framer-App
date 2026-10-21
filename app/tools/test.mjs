@@ -801,6 +801,16 @@ async function main() {
   await app.ev(`(() => { for (let i = 0; i < 30; i++) __tf.rememberFrame('C:/nowhere/f' + i + '.webp'); return 1; })()`);
   check('recent list is capped at 24', (await app.ev('__tf.recentFrames.length')) === 24);
 
+  // the preview stays square when the window is narrowed (it used to squash sideways) and when it is made short
+  const sq = await app.ev(`(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const r = () => { const b = document.querySelector('#view').getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height)]; };
+    const w0 = window.outerWidth, h0 = window.outerHeight; const o = {};
+    window.resizeTo(900, h0); await wait(400); o.narrow = r();
+    window.resizeTo(w0, Math.max(500, h0 - 150)); await wait(400); o.short = r();
+    window.resizeTo(w0, h0); await wait(400); return o;
+  })()`);
+  check('preview stays square when the window is narrowed or shortened', sq.narrow[0] === sq.narrow[1] && sq.short[0] === sq.short[1] && sq.narrow[0] > 100, J(sq));
+
   // persists across a restart: put two real frames back on top, then relaunch
   await app.ev(`(__tf.recentFrames = [${J(fC)}, ${J(fB)}, ${J(fA)}], 1)`);
   await app.ev(`__tf.loadFrame(${J(fB)}, { keepOrder: true })`);
