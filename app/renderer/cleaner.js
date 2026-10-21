@@ -1,13 +1,13 @@
 // "Clean frame" tool: a full-window overlay with the image preview on the left and the cleanup controls on the right.
 // The maths lives in lib/cleanframe.js and runs in lib/cleanframe.worker.js so the sliders stay responsive.
 import { DEFAULTS, fitRect } from './lib/cleanframe.js';
+import { buildControls, drawInSquare, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
-const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 const SPEC = [
   { k: 'radius', label: 'Refine radius', min: 0, max: 10, step: 1, tip: 'Radius in pixels of the original image for the alpha refinement. Bigger smooths more noise but softens fine detail. 0 skips the refinement.' },
-  { k: 'smoothing', label: 'Smoothing', min: 0.0001, max: 0.1, step: 0.0001, tip: 'How strongly the refinement follows the image colours (the filter\'s regulariser). Very small values can look noisy.' },
+  { k: 'smoothing', label: 'Smoothing', min: 0.0001, nmin: 0.000001, max: 0.1, step: 0.0001, tip: 'How strongly the refinement follows the image colours (the filter\'s regulariser). Very small values can look noisy.' },
   { k: 'floor', label: 'Alpha floor', min: 0, max: 1, step: 0.01, tip: 'After refining, alpha below this becomes fully transparent. 0 turns it off.' },
   { k: 'solidify', label: 'Solidify', min: 0, max: 4, step: 1, tip: 'Firms up semi-transparent pixels, like stacking the image on itself. Each step roughly doubles the effect.' },
   { k: 'ceiling', label: 'Alpha ceiling', min: 0, max: 1, step: 0.01, tip: 'After solidifying, alpha above this becomes fully opaque. 1 turns it off.' },
@@ -16,7 +16,7 @@ const SPEC = [
   { k: 'padding', label: 'Padding (px)', min: 0, max: 500, step: 1, tip: 'Extra pixels kept around the trimmed frame (never beyond the original image).' },
   { t: 'subhead', label: 'Output size' },
   { k: 'resize', label: 'Resize', t: 'select', opts: [['fit', 'Fit, pad to a square'], ['stretch', 'Stretch to a square'], ['none', 'Keep trimmed size']], tip: 'Fit keeps the aspect ratio and centres the frame on a transparent square. Stretch squeezes it to fill (what the ComfyUI workflow does).' },
-  { k: 'size', label: 'Size (px)', min: 128, max: 8192, step: 1, show: (p) => p.resize !== 'none' }
+  { k: 'size', label: 'Size (px)', min: 128, max: 8192, step: 1, numberOnly: true, show: (p) => p.resize !== 'none' }
 ];
 
 export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
@@ -24,65 +24,17 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
   const canvas = $('#cfPreview');
   const ctx = canvas.getContext('2d');
   const S = canvas.width; // internal preview resolution (square)
-  let worker = null, nextId = 0;
-  const waiting = new Map();
-  let params = { ...DEFAULTS };
+  const params = { ...DEFAULTS };
+  const rpc = makeRpc('lib/cleanframe.worker.js', (m) => setMsg(`The cleanup worker stopped: ${m}`, true));
+  const ask = rpc.ask;
   let src = null;          // { path, name, w, h, hasAlpha }
   let origCanvas = null, resultCanvas = null, result = null;
-  let busy = false, dirty = false, timer = 0, showOriginal = false;
-  const rows = [];
+  let busy = false, dirty = false, timer = 0, showOriginal = false, ui = null;
 
   const setMsg = (text, warn = false) => { const m = $('#cfMsg'); m.textContent = text; m.style.color = warn ? 'var(--warn)' : ''; };
 
-  function ensureWorker() {
-    if (worker) return worker;
-    worker = new Worker('lib/cleanframe.worker.js', { type: 'module' });
-    worker.onmessage = ({ data }) => { const w = waiting.get(data.id); if (w) { waiting.delete(data.id); data.type === 'error' ? w.reject(new Error(data.message)) : w.resolve(data); } };
-    worker.onerror = (e) => setMsg(`The cleanup worker failed: ${e.message || 'could not start'}`, true);
-    return worker;
-  }
-  const ask = (msg, transfer = []) => new Promise((resolve, reject) => {
-    const id = ++nextId;
-    waiting.set(id, { resolve, reject });
-    ensureWorker().postMessage({ ...msg, id }, transfer);
-  });
-
-  // ---------------------------------------------------------------- controls
-  function buildControls() {
-    const host = $('#cfControls');
-    for (const c of SPEC) {
-      if (c.t === 'subhead') { host.append(el('div', 'row subhead', c.label)); continue; }
-      const row = el('div', 'row');
-      const lab = el('label', null, c.label);
-      if (c.tip) row.title = c.tip;
-      const ctl = el('div', 'ctl');
-      if (c.t === 'select') {
-        const s = el('select');
-        for (const [v, t] of c.opts) { const o = el('option', null, t); o.value = v; s.append(o); }
-        s.addEventListener('change', () => { params[c.k] = s.value; changed(c.k); });
-        ctl.append(s);
-        c.sync = () => { s.value = params[c.k]; };
-      } else {
-        const r = el('input'); r.type = 'range'; r.min = c.min; r.max = c.max; r.step = c.step;
-        const n = el('input'); n.type = 'number'; n.min = c.k === 'smoothing' ? 0.000001 : c.min; n.max = c.max; n.step = c.step;
-        r.addEventListener('input', () => { n.value = r.value; params[c.k] = +r.value; changed(c.k); });
-        n.addEventListener('input', () => { if (n.value !== '' && !isNaN(+n.value)) { r.value = n.value; params[c.k] = +n.value; changed(c.k); } });
-        if (c.k === 'size') r.hidden = true; // a big pixel count is easier to type than to drag
-        ctl.append(r, n);
-        c.sync = () => { r.value = n.value = params[c.k]; };
-      }
-      row.append(lab, ctl);
-      c.row = row;
-      host.append(row);
-      rows.push(c);
-    }
-    syncControls();
-  }
-  function syncControls() {
-    for (const c of rows) { c.sync(); c.row.style.display = c.show && !c.show(params) ? 'none' : ''; }
-  }
   function changed(k) {
-    syncControls();
+    ui.sync();
     if (k === 'resize' || k === 'size') { updateInfo(); redraw(); return; } // only the export is affected, the cleaned preview stays as it is
     schedule();
   }
@@ -125,14 +77,7 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
     setMsg(`Trimmed to ${result.w}×${result.h} (from ${src.w}×${src.h}), output ${out}${ms != null ? `, ${ms} ms` : ''}`);
   }
   function redraw() {
-    ctx.clearRect(0, 0, S, S);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    const img = showOriginal ? origCanvas : resultCanvas;
-    if (!img) return;
-    if (!showOriginal && params.resize === 'stretch') { ctx.drawImage(img, 0, 0, S, S); return; }
-    const f = fitRect(img.width, img.height, S); // 'fit' (and 'none' / the original) keep the aspect ratio
-    ctx.drawImage(img, f.x, f.y, f.w, f.h);
+    drawInSquare(ctx, S, showOriginal ? origCanvas : resultCanvas, showOriginal ? 'fit' : params.resize, fitRect);
   }
 
   // ---------------------------------------------------------------- files
@@ -195,20 +140,16 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
   const isOpen = () => !root.hidden;
   function open() {
     root.hidden = false;
-    document.body.classList.add('cleaning');
-    if (!rows.length) buildControls();
+    if (!ui) ui = buildControls($('#cfControls'), SPEC, params, changed);
     redraw();
   }
-  function close() {
-    root.hidden = true;
-    document.body.classList.remove('cleaning');
-  }
+  function close() { root.hidden = true; }
 
   $('#cfOpen').onclick = pickImage;
   $('#cfClose').onclick = close;
   $('#cfSave').onclick = () => saveClicked(false);
   $('#cfSaveLoad').onclick = () => saveClicked(true);
-  $('#cfReset').onclick = () => { params = { ...DEFAULTS }; syncControls(); updateInfo(); redraw(); schedule(); };
+  $('#cfReset').onclick = () => { Object.assign(params, DEFAULTS); ui?.sync(); updateInfo(); redraw(); schedule(); };
   $('#cfOriginal').onchange = (e) => { showOriginal = e.target.checked; redraw(); };
   root.addEventListener('dragover', (e) => e.preventDefault());
   root.addEventListener('drop', async (e) => { // not stopped: the window-level handler must still clear the drag highlight (main-window handleDrop ignores it while we are open)
@@ -221,10 +162,10 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
 
   return {
     open, close, isOpen, loadPath, saveTo, pickImage,
-    get params() { return params; },
-    setParams(p) { params = { ...params, ...p }; syncControls(); updateInfo(); redraw(); return run(); },
+    params,
+    setParams(p) { Object.assign(params, p); ui?.sync(); updateInfo(); redraw(); return run(); },
     get result() { return result; },
-    /** For tests: save to a known path, then do what "Save and load" does. */
+    /** For tests: save to a known path, then do what "Save and use as frame" does. */
     async saveAndLoad(outPath) { const r = await saveTo(outPath); await loadFrame(outPath); close(); return r; }
   };
 }

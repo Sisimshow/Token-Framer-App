@@ -267,6 +267,17 @@ export function resizeLanczos(src, sw, sh, dw, dh) {
   return cur;
 }
 
+/** Final resize of cropped straight RGBA: 'fit' = fit + pad to size x size, 'stretch' = size x size ignoring aspect (what ComfyUI does), 'none' = as is. */
+export function resizeOutput(rgba, w, h, { resize = DEFAULTS.resize, size = DEFAULTS.size } = {}) {
+  if (resize === 'none') return { rgba, w, h };
+  if (resize === 'stretch') return { rgba: resizeLanczos(rgba, w, h, size, size), w: size, h: size };
+  const f = fitRect(w, h, size);
+  const small = resizeLanczos(rgba, w, h, f.w, f.h);
+  const out = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < f.h; y++) out.set(small.subarray(y * f.w * 4, (y + 1) * f.w * 4), ((y + f.y) * size + f.x) * 4);
+  return { rgba: out, w: size, h: size };
+}
+
 // ---------------------------------------------------------------- the whole pipeline, with per-stage caches
 /**
  * One image being cleaned. The expensive stages are cached: the guided filter by (radius, smoothing), the colour bleed by radius; floor, solidify,
@@ -299,14 +310,7 @@ export function createCleaner() {
     exportImage(p) {
       p = params(p);
       const c = this.preview(p);
-      if (p.resize === 'none') return { rgba: c.rgba, w: c.w, h: c.h };
-      const size = p.size;
-      if (p.resize === 'stretch') return { rgba: resizeLanczos(c.rgba, c.w, c.h, size, size), w: size, h: size };
-      const f = fitRect(c.w, c.h, size);
-      const small = resizeLanczos(c.rgba, c.w, c.h, f.w, f.h);
-      const out = new Uint8ClampedArray(size * size * 4);
-      for (let y = 0; y < f.h; y++) out.set(small.subarray(y * f.w * 4, (y + 1) * f.w * 4), ((y + f.y) * size + f.x) * 4);
-      return { rgba: out, w: size, h: size };
+      return resizeOutput(c.rgba, c.w, c.h, p);
     }
   };
 }

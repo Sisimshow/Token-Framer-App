@@ -212,6 +212,39 @@ async function main() {
     await app.ev(`__tf.loadFrame(${J(frameWebp)}, { keepOrder: true })`);
   }
 
+  // -- Solve frame background screen: opens from Tools, solves a generated white/black pair in the worker, saves a PNG and uses it as the frame
+  {
+    const whiteP = path.join(work, 'Ring white.png'), blackP = path.join(work, 'Ring black.png'), outP = path.join(work, 'Ring Frame (solved).png');
+    fs.rmSync(outP, { force: true });
+    const ui = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const N = 400, F = [200, 90, 40];
+      const mk = (bg) => { const c = document.createElement('canvas'); c.width = c.height = N; const x = c.getContext('2d'); const d = x.createImageData(N, N);
+        for (let y = 0; y < N; y++) for (let xx = 0; xx < N; xx++) { const r = Math.hypot(xx - 199.5, y - 199.5); const a = r > 120 && r < 176 ? 1 : r > 104 && r <= 120 ? (r - 104) / 16 : r >= 176 && r < 184 ? (184 - r) / 8 : 0; const i = (y * N + xx) * 4;
+          for (let k = 0; k < 3; k++) d.data[i + k] = Math.round(F[k] * a + bg * (1 - a)); d.data[i + 3] = 255; }
+        x.putImageData(d, 0, 0); return c; };
+      const save = async (c, p) => window.api.writeFile(p, new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer()));
+      await save(mk(255), ${J(whiteP)}); await save(mk(0), ${J(blackP)});
+      q('#btnTools').click(); await wait(80); q('#btnSolveFrame').click(); await wait(80);
+      const o = { open: !q('#solver').hidden, menuClosed: q('#toolsMenu').hidden, rows: document.querySelectorAll('#svControls .row').length, saveOff: q('#svSave').disabled };
+      await __tf.solver.loadSlot('white', ${J(whiteP)}); await __tf.solver.loadSlot('black', ${J(blackP)});
+      const r = __tf.solver.result;
+      o.solved = !!r && r.w < N && r.w > 300; o.cropped = r ? [r.w, r.h] : null; o.report = r?.report ? { w: +r.report.whiteBg.toFixed(2), b: +r.report.blackBg.toFixed(2) } : null;
+      const toolBefore = __tf.tool; window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' })); await wait(80); o.keysIgnored = __tf.tool === toolBefore;
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await wait(80); o.escCloses = q('#solver').hidden; __tf.solver.open();
+      await __tf.solver.setParams({ resize: 'stretch', size: 256 });
+      o.saveOn = !q('#svSave').disabled;
+      return o;
+    })()`);
+    check('Solve frame: opens from Tools, solves a white/black pair in the worker, Esc closes it, shortcuts are ignored while open', ui.open && ui.menuClosed && ui.rows >= 12 && ui.saveOff && ui.solved && ui.report?.w === 1 && ui.report?.b === 0 && ui.keysIgnored && ui.escCloses && ui.saveOn, J(ui));
+    const saved = await app.ev(`__tf.solver.saveAndLoad(${J(outP)})`);
+    const magic = fs.existsSync(outP) ? fs.readFileSync(outP).subarray(0, 4).toString('hex') : '';
+    const px = await app.ev(`(async () => { const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(outP)})])); const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d'); x.drawImage(bm, 0, 0);
+      const a = (px, py) => x.getImageData(px, py, 1, 1).data[3]; return { w: bm.width, centre: a(128, 128), ring: a(128 + 100, 128), corner: a(2, 2), frame: __tf.frame.path, closed: document.querySelector('#solver').hidden }; })()`);
+    check('Solve frame: Save and use as frame writes a PNG with the middle cleared, ring kept and corners transparent, and loads it as the frame', magic === '89504e47' && saved.w === 256 && px.w === 256 && px.centre === 0 && px.ring > 200 && px.corner === 0 && px.frame === outP && px.closed, J({ magic, saved: saved.w, px }));
+    await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
+  }
+
   // -- Auto center anchors: top keeps the art's top edge fixed while Scale x changes, bottom keeps the bottom edge, centre the middle
   const anc = await app.ev(`(() => { const T = window.__tf; const base = { width: 300, height: 600 }; const cfg = T.eff();
     const edge = (a, m) => { const r = T.resolveCfg({ ...cfg, fitEnabled: true, fitAnchor: a, fitScale: m, fitOffsetX: 0, fitOffsetY: 0 }, base); const w = 512 * r.baseScale, h = w * 2; const y = 256 - w / 2 + r.baseOffsetY; return { top: y, bottom: y + h, mid: y + h / 2 }; };
@@ -434,6 +467,55 @@ async function main() {
   check('clean frame: fit rect keeps aspect and centres', J(cf.fit) === J({ w: 500, h: 1000, x: 250, y: 0 }), J(cf.fit));
   check('clean frame: guided filter matches a naive double-precision reference, bands are exact, constant alpha stays 1', cf.naive < 2e-4 && cf.band < 1e-6 && cf.constQ > 0.9999, J({ naive: cf.naive, band: cf.band, constQ: cf.constQ }));
   check('clean frame: pipeline crops to the ring, exports a square with a transparent hole; opaque images are left uncropped', cf.pipe.hasAlpha && cf.pipe.pw < 200 && cf.pipe.ph < 160 && cf.pipe.ew === 128 && cf.pipe.eh === 128 && cf.pipe.sw === 64 && cf.pipe.centreAlpha === 0 && !cf.opaque.has && cf.opaque.w === 40 && cf.opaque.h === 30, J({ p: cf.pipe, o: cf.opaque }));
+
+  // -- Solve frame background (port of the ComfyUI Token Background Solver V2): hand cases, a synthetic white/black round trip, and the mask
+  const sv = await app.ev(`(async () => {
+    const m = await import('./lib/solveframe.js');
+    const out = {};
+    const px = (r, g, b) => [r, g, b, 255];
+    const one = (W, B, p) => { const s = m.solveMatte(Uint8ClampedArray.from(W), Uint8ClampedArray.from(B), 1, 1, p); return { a: s.alpha[0], c: s.color.map((x) => x[0]) }; };
+    out.opaqueBg = one(px(255, 255, 255), px(0, 0, 0), {});                                  // background only: fully transparent
+    out.solid = one(px(128, 128, 128), px(128, 128, 128), {});                                // same on both: opaque, colour kept
+    out.semi = one(px(153, 153, 153), px(51, 51, 51), { colorSource: 'white' });              // Cw 0.6, Cb 0.2: alpha 0.6, colour (0.6 - 0.4) / 0.6
+    out.semiBlack = one(px(153, 153, 153), px(51, 51, 51), { colorSource: 'black' });         // colour from black: 0.2 / 0.6
+    out.levels = one(px(230, 230, 230), px(26, 26, 26), { whiteLevel: 0.9, blackLevel: 0.1 }).a; // 0.902 and 0.102 against levels 0.9 / 0.1: about transparent
+    const modes = {}; for (const mode of ['min', 'max', 'mean']) modes[mode] = one(px(255, 200, 255), px(0, 0, 0), { channelMode: mode, floor: 0 }).a; out.modes = modes;
+    out.notSnapped = one(px(8, 8, 8), px(0, 0, 0), { ceiling: 0.98, floor: 0 }).a;           // alpha 0.9686 stays below the ceiling
+    out.solid1 = Array.from(m.solidifyAlpha(Float32Array.from([0.5, 0.9686]), 1));
+    // size mismatch and swapped inputs
+    const s1 = m.createSolver(); s1.setImage('white', new Uint8ClampedArray(2 * 2 * 4).fill(255), 2, 2); s1.setImage('black', new Uint8ClampedArray(3 * 2 * 4).fill(0), 3, 2);
+    try { s1.preview({}); out.mismatch = 'no error'; } catch (e) { out.mismatch = e.message; }
+    const s2 = m.createSolver(); s2.setImage('white', new Uint8ClampedArray(4 * 4 * 4).fill(0), 4, 4); s2.setImage('black', new Uint8ClampedArray(4 * 4 * 4).fill(255), 4, 4);
+    out.swapped = (() => { const r = s2.preview({}).report; return r.blackBg > r.whiteBg; })();
+    // clear the middle: float32 subtraction on the alpha, mask scaled when sizes differ
+    { const rgba = Uint8ClampedArray.from([10, 20, 30, 255, 10, 20, 30, 0, 10, 20, 30, 255, 10, 20, 30, 200]);
+      const r = m.clearMiddle(rgba, 4, 1, Uint8Array.from([0, 0, 255, 100]), 4, 1);
+      out.punch = [r[3], r[7], r[11], r[15]]; // 255 stays, 0 stays, masked -> 0, 200 with mask 100 -> about 100
+      const wide = m.clearMiddle(new Uint8ClampedArray(8 * 8 * 4).fill(255), 8, 8, new Uint8Array(4 * 4).fill(255), 4, 4);
+      out.punchScaled = wide[3] === 0 && wide[(8 * 8 - 1) * 4 + 3] === 0; }
+    // round trip: a soft ring of known colour and alpha, rendered over white and over black, then solved
+    { const N = 96, W = new Uint8ClampedArray(N * N * 4), B = new Uint8ClampedArray(N * N * 4), A = new Float32Array(N * N);
+      const F = [200, 90, 40];
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const d = Math.hypot(x - 47.5, y - 47.5); const a = d > 30 && d < 44 ? 1 : d > 26 && d <= 30 ? (d - 26) / 4 : d >= 44 && d < 46 ? (46 - d) / 2 : 0; const i = y * N + x; A[i] = a;
+        for (let c = 0; c < 3; c++) { W[i*4+c] = Math.round(F[c] * a + 255 * (1 - a)); B[i*4+c] = Math.round(F[c] * a); } W[i*4+3] = B[i*4+3] = 255; }
+      const sol = m.solveMatte(W, B, N, N, { channelMode: 'mean', floor: 0, ceiling: 1 });
+      let worst = 0, cw = 0; for (let i = 0; i < N * N; i++) { worst = Math.max(worst, Math.abs(sol.alpha[i] - A[i])); if (A[i] > 0.5) cw = Math.max(cw, Math.abs(sol.color[0][i] * 255 - F[0])); }
+      out.round = { alphaErr: worst, colourErr: cw, report: sol.report };
+      const sv = m.createSolver(); sv.setImage('white', W, N, N); sv.setImage('black', B, N, N);
+      const mask = new Uint8Array(N * N); for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (Math.hypot(x - 47.5, y - 47.5) < 20) mask[y * N + x] = 255; sv.setMask(mask, N, N);
+      const ex = sv.exportImage({ resize: 'stretch', size: 64, clearMiddle: true, channelMode: 'mean', floor: 0, ceiling: 1, solidify: 0 });
+      const centre = (32 * 64 + 32) * 4 + 3, onRing = (32 * 64 + 6) * 4 + 3;
+      out.pipe = { w: ex.w, h: ex.h, centreAlpha: ex.rgba[centre], ringAlpha: ex.rgba[onRing] };
+      const keep = sv.exportImage({ resize: 'stretch', size: 64, clearMiddle: false, solidify: 2, channelMode: 'mean', floor: 0, ceiling: 1 });
+      out.keepMiddle = keep.rgba[centre] === 0; }
+    return out;
+  })()`);
+  const nearTo = (a, b, e = 1e-3) => Math.abs(a - b) <= e;
+  check('solve frame: opaque/transparent/semi-transparent hand cases, colour source and background levels', nearTo(sv.opaqueBg.a, 0) && nearTo(sv.solid.a, 1) && nearTo(sv.solid.c[0], 128 / 255) && nearTo(sv.semi.a, 0.6) && nearTo(sv.semi.c[0], 1 / 3) && nearTo(sv.semiBlack.c[0], 1 / 3) && sv.levels < 0.01, J(sv));
+  check('solve frame: channel modes min / max / mean differ as expected; floor and ceiling do not snap in between', nearTo(sv.modes.min, 0) && nearTo(sv.modes.max, 0.2157, 2e-3) && nearTo(sv.modes.mean, 0.0719, 2e-3) && nearTo(sv.notSnapped, 0.9686, 2e-3) && nearTo(sv.solid1[0], 0.75, 1e-6) && nearTo(sv.solid1[1], 1 - (1 - 0.9686) ** 2, 1e-4), J({ m: sv.modes, n: sv.notSnapped, s: sv.solid1 }));
+  check('solve frame: size mismatch is an error, swapped inputs are detected', /same size/.test(sv.mismatch) && sv.swapped === true, J({ mm: sv.mismatch, sw: sv.swapped }));
+  check('solve frame: clear-the-middle subtracts the mask from alpha (and scales it to other sizes)', sv.punch[0] === 255 && sv.punch[1] === 0 && sv.punch[2] === 0 && Math.abs(sv.punch[3] - 100) <= 1 && sv.punchScaled === true, J({ p: sv.punch, s: sv.punchScaled }));
+  check('solve frame: a known soft ring is recovered from its white and black renders; the middle is cleared only when asked', sv.round.alphaErr < 0.01 && sv.round.colourErr < 6 && sv.pipe.w === 64 && sv.pipe.centreAlpha === 0 && sv.pipe.ringAlpha > 200 && sv.keepMiddle, J(sv.round) + ' ' + J(sv.pipe));
 
   // -- RMBG matte post-processing (same maths as the ComfyUI RMBG node), on synthetic mattes
   const mt = await app.ev(`(async () => {

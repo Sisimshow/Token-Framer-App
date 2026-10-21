@@ -34,6 +34,10 @@ Personal-use project, largely AI-written.
 - **Tools > Clean frame…** opens a separate screen for tidying a frame image: refine its transparent edges (radius, smoothing, alpha floor / ceiling, solidify),
   trim the empty border (threshold, padding) and resize it. **Save as…** writes a PNG; **Save and use as frame** also loads it as the frame in Token Framer.
   Based on the author's ComfyUI "Token Cleaner" workflow; the resize matches the Pillow Lanczos that workflow uses.
+- **Tools > Solve frame background…** makes a transparent frame from the same frame image rendered on a white background and on a black one (triangulation matting: the
+  transparency is measured, not guessed). Controls: channel mode, alpha floor / ceiling, white and black levels, which render supplies the colours, solidify, trim, resize
+  and **Clear the middle** (a fixed circle about half the image width). It warns when the two renders look swapped or do not line up. Same two save buttons as Clean frame.
+  Based on the author's ComfyUI "Token Background Solver V2" workflow, without its optional image-cleanup model step.
 - Settings persist in the Electron user-data folder. F12 opens DevTools.
 
 ## License
