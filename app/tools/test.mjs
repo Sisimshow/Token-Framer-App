@@ -273,6 +273,36 @@ async function main() {
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
   }
 
+  // -- Solve image background mode: same screen and maths as the frame solver, but the whole picture is kept (no trim, no resize, no cut-out middle)
+  {
+    const whiteP = path.join(work, 'Ring white.png'), blackP = path.join(work, 'Ring black.png'), outP = path.join(work, 'Ring (solved).png');
+    fs.rmSync(outP, { force: true });
+    const im = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const pure = await import('./lib/solveframe.js');
+      const s = pure.createSolver(); const px = (v) => { const a = new Uint8ClampedArray(6 * 6 * 4).fill(v); for (let i = 3; i < a.length; i += 4) a[i] = 255; return a; };
+      s.setImage('white', px(255), 6, 6); s.setImage('black', px(0), 6, 6);   // nothing but background: fully transparent everywhere
+      const pureOut = { cropped: s.preview({ crop: true }).w, kept: s.preview({ crop: false }).w, keptH: s.preview({ crop: false }).h };
+      q('#btnTools').click(); await wait(80); q('#btnSolveImage').click(); await wait(400);
+      const o = { pure: pureOut, open: !q('#solver').hidden, mode: __tf.solver.mode, title: q('#svTitle').textContent, button: q('#svSaveLoad').textContent,
+        labels: [...document.querySelectorAll('#svControls .row label')].map((l) => l.textContent), subheads: [...document.querySelectorAll('#svControls .subhead')].map((l) => l.textContent.trim()) };
+      await __tf.solver.loadSlot('white', ${J(whiteP)}); await __tf.solver.loadSlot('black', ${J(blackP)});
+      for (let i = 0; i < 100 && !__tf.solver.result; i++) await wait(100);
+      o.whole = [__tf.solver.result?.w, __tf.solver.result?.h];
+      __tf.solver.open('frame'); await wait(600);                // back to frame mode: the same pair is trimmed again
+      o.frame = { mode: __tf.solver.mode, title: q('#svTitle').textContent, button: q('#svSaveLoad').textContent, w: __tf.solver.result?.w, labels: [...document.querySelectorAll('#svControls .row label')].map((l) => l.textContent) };
+      __tf.solver.open('image'); await wait(600);
+      return o;
+    })()`);
+    check('Solve image background: image mode hides the trim/resize/middle controls and keeps the whole picture; frame mode still trims it', im.pure.cropped === 6 && im.pure.kept === 6 && im.pure.keptH === 6 && im.open && im.mode === 'image' && im.title === 'Solve image background' && im.button === 'Save and open as image' && !im.labels.includes('Crop threshold') && !im.labels.includes('Resize') && !im.labels.includes('Clear the middle') && im.labels.includes('Channel mode') && im.whole[0] === 400 && im.whole[1] === 400 && im.frame.mode === 'frame' && im.frame.w < 400 && im.frame.button === 'Save and use as frame' && im.frame.labels.includes('Crop threshold'), J(im));
+    const saved = await app.ev(`__tf.solver.saveAndLoad(${J(outP)})`);
+    const magic = fs.existsSync(outP) ? fs.readFileSync(outP).subarray(0, 4).toString('hex') : '';
+    const after = await app.ev(`(async () => { const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(outP)})])); const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d'); x.drawImage(bm, 0, 0);
+      const a = (px, py) => x.getImageData(px, py, 1, 1).data[3]; return { w: bm.width, h: bm.height, ring: a(199, 60), corner: a(2, 2), items: __tf.items.length, path: __tf.items[0]?.path, frameUnchanged: !/solved/.test(__tf.frame.path), closed: document.querySelector('#solver').hidden }; })()`);
+    check('Solve image background: Save and open as image writes the full-size PNG and opens it as the art image (the frame is left alone)', magic === '89504e47' && saved.w === 400 && after.w === 400 && after.h === 400 && after.ring > 200 && after.corner === 0 && after.items === 1 && after.path === outP && after.frameUnchanged && after.closed, J({ magic, saved: saved.w, after }));
+    await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art back for the checks that follow
+  }
+
   // -- Clean image screen: the real model through the main process (skipped when app/models/1x_PureVision.onnx is not there, e.g. a fresh clone)
   if (!fs.existsSync(path.join(root, 'models', '1x_PureVision.onnx'))) {
     console.log('SKIP  Clean image: models/1x_PureVision.onnx not found (convert it with tools/convert-model.py to run these checks)');

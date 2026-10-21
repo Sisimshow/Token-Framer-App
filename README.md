@@ -44,6 +44,8 @@ Personal-use project, largely AI-written.
   screen as Clean image; saved as a PNG.
 - **Converted image models** (used by Clean image) live in `app/models/*.onnx` and are not tracked by git. Recreate one with ComfyUI's Python (ComfyUI need not be running): 
   `E:\SwarmUI\dlbackend\comfy\python_embeded\python.exe app	ools\convert-model.py "<path>x_PureVision.pth" app\modelsx_PureVision.onnx`.
+- **Tools > Solve image background…** is the same white-and-black solver for ordinary art: it keeps the whole picture (no trim, resize or cut-out middle) and **Save and open as image** opens
+  the result as the art image. Based on the author's "Image Background Solver V2" workflow.
 - Settings persist in the Electron user-data folder. F12 opens DevTools.
 
 ## License

@@ -35,7 +35,9 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   (premultiplied 8-bit, 22-bit fixed point); the preview skips it. Saves PNG only (lossy WebP would damage the alpha edges), default name always contains
   "Frame" so folder mode never treats it as art. While the overlay is open `onKey`, paste and drop on the main window are ignored. Deliberately not ported:
   the node's decontaminate option (hard-coded off in the workflow). Fit+pad is the default resize; "Stretch" matches ComfyUI's behaviour.
-- Solve frame background tool (Tools > Solve frame background…, `renderer/solver.js`): same screen layout as Clean frame (`.toolscreen` classes, shared helpers in
+- Solve frame background / Solve image background (Tools > Solve frame background… and Image tools > Solve image background…, ONE screen `renderer/solver.js`, `open('frame'|'image')`;
+  per-mode settings in `paramSets`, controls rebuilt on a mode change). Image mode = the Image Background Solver V2: same maths, `crop:false`, resize 'none', no cut-out middle, and "Save and
+  open as image" (`openImages`) instead of `loadFrame`. Frame mode: same screen layout as Clean frame (`.toolscreen` classes, shared helpers in
   `renderer/ui-kit.js`: control builder, worker RPC that survives a worker crash, square preview drawing). Port of the ComfyUI "Token Background Solver V2": maths in
   `lib/solveframe.js` (triangulation matting from a white and a black render -> floor/ceiling -> colour -> `solidify` passes (the workflow's two Porter-Duff self-composites)
   -> shared crop/resize from `cleanframe.js` -> "clear the middle": `assets/middle-mask.png`, a fixed 1000x1000 circle subtracted from alpha, Lanczos-scaled to other sizes),

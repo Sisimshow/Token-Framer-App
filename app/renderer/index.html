@@ -29,6 +29,7 @@
           <div id="toolsMenu" hidden>
             <div class="tmhead">Image tools</div>
             <button id="btnCleanImage" title="Remove compression noise and artifacts from an opaque image with a restoration model">Clean image…</button>
+            <button id="btnSolveImage" title="Make a transparent image from the same render on a white and on a black background">Solve image background…</button>
             <button id="btnUpscaleImage" title="Enlarge an opaque image 2x or 4x with an upscaling model">Upscale image…</button>
             <div class="tmhead">Frame tools</div>
             <button id="btnCleanFrame" title="Refine a frame's transparent edges, trim the empty border and resize it">Clean frame…</button>
@@ -103,7 +104,7 @@
   </div>
   <div id="solver" class="toolscreen" hidden role="dialog" aria-modal="true" aria-label="Solve frame background">
     <div class="tsBar">
-      <strong>Solve frame background</strong>
+      <strong id="svTitle">Solve frame background</strong>
       <span class="pair"><button id="svOpenWhite" title="The frame rendered on a white background (or drop it on the left half)">Open white…</button><span id="svWhiteName" class="tsName muted">none</span></span>
       <span class="pair"><button id="svOpenBlack" title="The same frame rendered on a black background (or drop it on the right half)">Open black…</button><span id="svBlackName" class="tsName muted">none</span></span>
       <span class="grow"></span>

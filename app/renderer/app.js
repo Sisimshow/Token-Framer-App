@@ -1268,12 +1268,13 @@ function setup() {
   $('#btnFrame').onclick = async () => { const r = await api.pickImages({ multi: false, defaultPath: state.frame ? dirOf(state.frame.path) : state.lastDir }); if (r[0]) loadFrame(r[0]); };
   const setToolsMenu = (open) => { $('#toolsMenu').hidden = !open; $('#btnTools').classList.toggle('active', open); $('#btnTools').setAttribute('aria-expanded', String(open)); };
   const cleaner = (window.__cleaner = initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }));
-  window.__solver = initSolver({ api, loadFrame, dirOf, sepOf, baseOf });
+  window.__solver = initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf });
   window.__imgclean = initImageCleaner({ api, openImages, dirOf, sepOf, baseOf });
   $('#btnCleanImage').onclick = () => { setToolsMenu(false); window.__imgclean.open('clean'); };
   $('#btnUpscaleImage').onclick = () => { setToolsMenu(false); window.__imgclean.open('upscale'); };
   $('#btnCleanFrame').onclick = () => { setToolsMenu(false); cleaner.open(); };
-  $('#btnSolveFrame').onclick = () => { setToolsMenu(false); window.__solver.open(); };
+  $('#btnSolveFrame').onclick = () => { setToolsMenu(false); window.__solver.open('frame'); };
+  $('#btnSolveImage').onclick = () => { setToolsMenu(false); window.__solver.open('image'); };
   $('#btnTools').onclick = (e) => { e.stopPropagation(); setToolsMenu($('#toolsMenu').hidden); };
   document.addEventListener('click', (e) => { if (!$('#toolsMenu').hidden && !$('#toolsWrap').contains(e.target)) setToolsMenu(false); });
   $('#btnFrames').onclick = () => { state.ui.framesOpen = !state.ui.framesOpen; applyFramesOpen(); persist(); };

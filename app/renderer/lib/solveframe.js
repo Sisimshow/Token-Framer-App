@@ -9,6 +9,7 @@ import { cropBox, assemble, resizeLanczos, resizeOutput, DEFAULTS as CLEAN } fro
 export const SOLVE_DEFAULTS = {
   channelMode: 'min', floor: 0.02, ceiling: 0.98, whiteLevel: 1, blackLevel: 0, colorSource: 'white',
   solidify: 2, threshold: CLEAN.threshold, padding: CLEAN.padding, resize: CLEAN.resize, size: CLEAN.size, clearMiddle: true,
+  crop: true,                 // false: keep the full image (the Image Background Solver V2 has no trim, resize or cut-out middle)
   preClean: true, preCleanModel: '' // app-level options: which model, if any, was used to prepare the cleaned copies
 };
 const EPS = 1e-6;
@@ -108,7 +109,7 @@ export function createSolver() {
     const useClean = !!(p.preClean && cleanWhite && cleanBlack); // both cleaned copies, or neither (the alpha needs the pair to be treated alike)
     const { alpha: a0, color, report } = solveMatte(useClean ? cleanWhite : white.rgba, useClean ? cleanBlack : black.rgba, white.w, white.h, p);
     const alpha = solidifyAlpha(a0, p.solidify);
-    const box = cropBox(alpha, white.w, white.h, p.threshold, p.padding);
+    const box = p.crop === false ? { x0: 0, y0: 0, x1: white.w, y1: white.h, found: true } : cropBox(alpha, white.w, white.h, p.threshold, p.padding);
     return { p, report, box, usedClean: useClean, rgba: assemble(color, alpha, white.w, box), w: box.x1 - box.x0, h: box.y1 - box.y0 };
   };
   return {

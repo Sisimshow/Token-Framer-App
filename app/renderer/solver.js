@@ -1,4 +1,5 @@
-// "Solve frame background" tool: a transparent frame from the same render on a white and on a black background (triangulation matting).
+// "Solve frame background" / "Solve image background" tool: a transparent frame (or any image) from the same render on a white and on a black background (triangulation matting).
+// One screen, two modes: 'frame' trims, resizes and can clear the middle (Token Background Solver V2), 'image' keeps the whole picture (Image Background Solver V2).
 // Maths in lib/solveframe.js, run by lib/solveframe.worker.js. Same screen layout as Clean frame (see cleaner.js).
 import { fitRect } from './lib/cleanframe.js';
 import { SOLVE_DEFAULTS } from './lib/solveframe.js';
@@ -6,7 +7,9 @@ import { buildControls, drawInSquare, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 
-const specFor = (models) => [
+/** The control rows for a mode. Image mode stops before the Trim section: it keeps the whole picture, with no resize and no cut-out middle. */
+const specFor = (models, mode) => {
+  const spec = [
   { t: 'subhead', label: 'Pre-clean', show: () => models.length > 0 },
   { k: 'preClean', label: 'Clean noise first', t: 'check', show: () => models.length > 0, tip: 'Runs both renders through a restoration model first (the ComfyUI workflow does this with 1x_PureVision). It removes compression noise that would otherwise show up in the transparency. The model works on RGB only, which is fine because the renders are opaque.' },
   { k: 'preCleanModel', label: 'Model', t: 'select', opts: models.map((m) => [m, m]), show: (p) => models.length > 0 && p.preClean, tip: 'The model used for the pre-clean (the .onnx files in the models folder).' },
@@ -26,14 +29,21 @@ const specFor = (models) => [
   { k: 'resize', label: 'Resize', t: 'select', opts: [['fit', 'Fit, pad to a square'], ['stretch', 'Stretch to a square'], ['none', 'Keep trimmed size']], tip: 'Fit keeps the aspect ratio and centres the frame on a transparent square. Stretch squeezes it to fill (what the ComfyUI workflow does).' },
   { k: 'size', label: 'Size (px)', min: 128, max: 8192, step: 1, numberOnly: true, show: (p) => p.resize !== 'none' },
   { k: 'clearMiddle', label: 'Clear the middle', t: 'check', tip: 'Makes the middle of the output transparent with a fixed circle about half the width of the image. Turn it off if your frame\'s opening is smaller than that.' }
-];
+  ];
+  if (mode === 'image') return spec.slice(0, spec.findIndex((c) => c.t === 'subhead' && c.label === 'Trim'));
+  return spec;
+};
 
-export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
+// Settings per mode, so switching between the two screens keeps each one's values. The image set has the frame-only options switched off.
+const IMAGE_OVERRIDES = { crop: false, resize: 'none', clearMiddle: false };
+
+export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf }) {
   const root = $('#solver');
   const canvas = $('#svPreview');
   const ctx = canvas.getContext('2d');
   const S = canvas.width;
-  const params = { ...SOLVE_DEFAULTS };
+  const paramSets = { frame: { ...SOLVE_DEFAULTS }, image: { ...SOLVE_DEFAULTS, ...IMAGE_OVERRIDES } };
+  let mode = 'frame', params = paramSets.frame;   // `params` is the active mode's set (the controls are rebuilt on a mode change, so they follow it)
   const rpc = makeRpc('lib/solveframe.worker.js', (m) => setMsg(`The solver worker stopped: ${m}`, true));
   const ask = rpc.ask;
   const slots = { white: null, black: null }; // { path, name, w, h, canvas }
@@ -133,7 +143,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
     if (!result) return;
     const out = params.resize === 'none' ? `${result.w}×${result.h}` : `${params.size}×${params.size}`;
     const pre = result.usedClean ? `, pre-cleaned with ${params.preCleanModel}` : '';
-    setMsg(`Trimmed to ${result.w}×${result.h} (from ${slots.white.w}×${slots.white.h}), output ${out}${pre}${ms != null ? `, ${ms} ms` : ''}${result.cleanNote ? `. ${result.cleanNote}` : ''}`, !!result.cleanNote);
+    setMsg(`${mode === 'image' ? `Solved ${result.w}×${result.h}` : `Trimmed to ${result.w}×${result.h} (from ${slots.white.w}×${slots.white.h}), output ${out}`}${pre}${ms != null ? `, ${ms} ms` : ''}${result.cleanNote ? `. ${result.cleanNote}` : ''}`, !!result.cleanNote);
   }
   function showReport(r) {
     const box = $('#svReport');
@@ -196,9 +206,11 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
   function defaultName() {
     const white = slots.white;
     const base = (white?.name || '').replace(/[\s_-]*white[\s_-]*/gi, ' ').trim() || 'Token';
-    const name = /frame/i.test(base) ? `${base} (solved).png` : `${base} Frame (solved).png`; // "frame" in the name keeps folder mode from treating it as art
+    const name = mode === 'image' || /frame/i.test(base) ? `${base} (solved).png` : `${base} Frame (solved).png`; // a frame's name keeps "frame" so folder mode never treats it as art
     return white ? `${dirOf(white.path)}${sepOf(white.path)}${name}` : name;
   }
+  /** What "Save and use…" does with the saved file: frame mode loads it as the frame, image mode opens it as the art image. */
+  const useSaved = (out) => (mode === 'image' ? openImages([out]) : loadFrame(out));
   async function saveClicked(andLoad) {
     if (!slots.white || !slots.black) return;
     let out = await api.pickSave(defaultName(), 'png');
@@ -208,7 +220,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
     try {
       setMsg('Saving…');
       const r = await saveTo(out);
-      if (andLoad) { await loadFrame(out); close(); }
+      if (andLoad) { await useSaved(out); close(); }
       else setMsg(`Saved ${r.path} (${r.w}×${r.h})`);
     } catch (err) {
       setMsg(`Could not save: ${err.message}`, true);
@@ -219,19 +231,26 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
 
   // ---------------------------------------------------------------- open / close / wiring
   const isOpen = () => !root.hidden;
-  async function open() {
+  /** mode 'frame' (trim, resize, clear the middle) or 'image' (keep everything). Switching mode swaps in that mode's settings and re-solves the loaded pair. */
+  async function open(nextMode = mode) {
     root.hidden = false;
+    const switched = nextMode !== mode;
+    mode = nextMode; params = paramSets[mode];
+    $('#svTitle').textContent = mode === 'image' ? 'Solve image background' : 'Solve frame background';
+    $('#svSaveLoad').textContent = mode === 'image' ? 'Save and open as image' : 'Save and use as frame';
+    $('#svSaveLoad').title = mode === 'image' ? 'Save the image as a PNG, then open it in Token Framer as the art image' : 'Save the frame as a PNG, then use it as the frame in Token Framer';
     try { models = (await api.listModels()).filter((m) => m.scale === 1).map((m) => m.name); } catch { models = []; } // only same-size cleanup models make sense for the renders
     if (!models.includes(params.preCleanModel)) params.preCleanModel = preferredModel();
-    const key = models.join('|');
-    if (!ui || key !== builtFor) { // first open, or the models folder changed since
+    const key = `${mode}|${models.join('|')}`;
+    if (!ui || key !== builtFor) { // first open, the models folder changed, or the mode changed
       $('#svControls').textContent = '';
-      ui = buildControls($('#svControls'), specFor(models), params, changed);
+      ui = buildControls($('#svControls'), specFor(models, mode), params, changed);
       builtFor = key;
     }
     ui.sync();
     ensureMask().catch((err) => setMsg(`Could not load the middle mask: ${err.message}`, true));
     redraw();
+    if (switched && slots.white && slots.black) schedule(); // the same pair, solved the other way
   }
   function close() { root.hidden = true; }
 
@@ -240,7 +259,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
   $('#svClose').onclick = close;
   $('#svSave').onclick = () => saveClicked(false);
   $('#svSaveLoad').onclick = () => saveClicked(true);
-  $('#svReset').onclick = () => { Object.assign(params, SOLVE_DEFAULTS); params.preCleanModel = preferredModel(); ui?.sync(); updateInfo(); redraw(); schedule(); };
+  $('#svReset').onclick = () => { Object.assign(params, SOLVE_DEFAULTS, mode === 'image' ? IMAGE_OVERRIDES : {}); params.preCleanModel = preferredModel(); ui?.sync(); updateInfo(); redraw(); schedule(); };
   $('#svView').onchange = (e) => { view = e.target.value; redraw(); };
   root.addEventListener('dragover', (e) => e.preventDefault());
   root.addEventListener('drop', async (e) => { // not stopped: the window-level handler must still clear the drag highlight
@@ -264,7 +283,8 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
     params,
     setParams(p) { Object.assign(params, p); ui?.sync(); updateInfo(); redraw(); return run(); },
     get result() { return result; },
+    get mode() { return mode; },
     get cleanState() { return { white: slots.white?.cleanKey || null, black: slots.black?.cleanKey || null, used: result?.usedClean ?? null, models: [...models] }; },
-    async saveAndLoad(outPath) { const r = await saveTo(outPath); await loadFrame(outPath); close(); return r; }
+    async saveAndLoad(outPath) { const r = await saveTo(outPath); await useSaved(outPath); close(); return r; }
   };
 }
