@@ -136,7 +136,7 @@ async function getCleanSession(name) {
 
 ipcMain.handle('models:list', async () => listCleanModels());
 /** rgba: straight RGBA bytes. The model sees RGB only; the alpha channel is returned unchanged. */
-ipcMain.handle('models:clean', async (e, name, rgba, w, h) => {
+ipcMain.handle('models:clean', async (e, name, rgba, w, h, reqId) => { // reqId comes back on every progress event so each screen can tell its own job apart
   if (!(rgba instanceof Uint8Array) || !Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || rgba.length !== w * h * 4) throw new Error('Unexpected image data.');
   const { session, ort, provider } = await getCleanSession(name);
   const runModel = async (data, tw, th) => {
@@ -146,7 +146,7 @@ ipcMain.handle('models:clean', async (e, name, rgba, w, h) => {
   const t = Date.now();
   let last = 0;
   const result = await modelrun.cleanRgba(runModel, rgba, w, h, {
-    onProgress: (done, total) => { if (Date.now() - last > 100 || done === total) { last = Date.now(); e.sender.send('models:progress', { done, total }); } }
+    onProgress: (done, total) => { if (Date.now() - last > 100 || done === total) { last = Date.now(); e.sender.send('models:progress', { done, total, id: reqId }); } }
   });
   return { rgba: result, ms: Date.now() - t, provider };
 });

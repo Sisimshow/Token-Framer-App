@@ -6,7 +6,11 @@ import { buildControls, drawInSquare, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 
-const SPEC = [
+const specFor = (models) => [
+  { t: 'subhead', label: 'Pre-clean', show: () => models.length > 0 },
+  { k: 'preClean', label: 'Clean noise first', t: 'check', show: () => models.length > 0, tip: 'Runs both renders through a restoration model first (the ComfyUI workflow does this with 1x_PureVision). It removes compression noise that would otherwise show up in the transparency. The model works on RGB only, which is fine because the renders are opaque.' },
+  { k: 'preCleanModel', label: 'Model', t: 'select', opts: models.map((m) => [m, m]), show: (p) => models.length > 0 && p.preClean, tip: 'The model used for the pre-clean (the .onnx files in the models folder).' },
+  { t: 'subhead', label: 'Matte' },
   { k: 'channelMode', label: 'Channel mode', t: 'select', opts: [['min', 'Min'], ['max', 'Max'], ['mean', 'Mean']], tip: 'The three colour channels each give an alpha estimate; this picks how they are combined. They should agree.' },
   { k: 'floor', label: 'Alpha floor', min: 0, max: 1, step: 0.001, tip: 'Alpha below this becomes fully transparent, which removes background noise.' },
   { k: 'ceiling', label: 'Alpha ceiling', min: 0, max: 1, step: 0.001, tip: 'Alpha above this becomes fully opaque, which keeps solid areas solid.' },
@@ -34,10 +38,39 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
   const ask = rpc.ask;
   const slots = { white: null, black: null }; // { path, name, w, h, canvas }
   let result = null, resultCanvas = null, maskAlpha = null, maskReady = null;
-  let busy = false, dirty = false, timer = 0, ui = null, view = 'result';
+  let busy = false, dirty = false, timer = 0, ui = null, view = 'result', models = [], builtFor = null;
+  const jobs = new Map(); // model request id -> slot, so progress events go to the right message
 
   const setMsg = (text, warn = false) => { const m = $('#svMsg'); m.textContent = text; m.style.color = warn ? 'var(--warn)' : ''; };
   const toCanvas = (rgba, w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0); return c; };
+
+  /** The pre-clean is in effect: a model exists, the box is ticked and a model is chosen. */
+  const usePre = () => models.length > 0 && !!params.preClean && !!params.preCleanModel;
+  const preferredModel = () => (models.includes('1x_PureVision') ? '1x_PureVision' : models[0] || '');
+
+  /**
+   * Makes sure `slot` has a cleaned copy from the chosen model (computed in the main process, then handed to the worker). Safe against the render being
+   * replaced or the model changed while it runs: such a result is dropped. Resolves quietly when there is nothing to do.
+   */
+  async function ensureClean(slot) {
+    const s = slots[slot], name = params.preCleanModel;
+    if (!s || !usePre() || s.cleanKey === name) return;
+    const jobId = `sv-${crypto.randomUUID()}`;
+    jobs.set(jobId, slot);
+    try {
+      setMsg(`Cleaning the ${slot} render…`);
+      const r = await api.cleanImage(name, new Uint8Array(s.rgba), s.w, s.h, jobId);
+      if (slots[slot] !== s || params.preCleanModel !== name) return;     // replaced meanwhile
+      s.cleanCanvas = toCanvas(new Uint8ClampedArray(r.rgba.buffer, r.rgba.byteOffset, r.rgba.byteLength), s.w, s.h);
+      const buf = r.rgba.buffer.slice(r.rgba.byteOffset, r.rgba.byteOffset + r.rgba.byteLength);
+      await ask({ type: 'setClean', slot, rgba: buf }, [buf]);
+      if (slots[slot] !== s) return;
+      s.cleanKey = name; s.cleanMs = r.ms; s.provider = r.provider;
+    } finally {
+      jobs.delete(jobId);
+    }
+  }
+  const ensureCleanBoth = async () => { await ensureClean('white'); await ensureClean('black'); };
 
   function changed(k) {
     ui.sync();
@@ -76,8 +109,11 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
     try {
       do {
         dirty = false;
+        let cleanNote = '';
+        try { await ensureCleanBoth(); } catch (err) { cleanNote = `Pre-clean failed (${err.message}); using the renders as they are.`; }
         setMsg('Processing…');
-        const r = await ask({ type: 'preview', params: { ...params } });
+        const r = await ask({ type: 'preview', params: { ...params, preClean: usePre() } });
+        r.cleanNote = cleanNote;
         result = r;
         resultCanvas = toCanvas(r.rgba, r.w, r.h);
         updateInfo(r.ms);
@@ -96,7 +132,8 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
   function updateInfo(ms) {
     if (!result) return;
     const out = params.resize === 'none' ? `${result.w}×${result.h}` : `${params.size}×${params.size}`;
-    setMsg(`Trimmed to ${result.w}×${result.h} (from ${slots.white.w}×${slots.white.h}), output ${out}${ms != null ? `, ${ms} ms` : ''}`);
+    const pre = result.usedClean ? `, pre-cleaned with ${params.preCleanModel}` : '';
+    setMsg(`Trimmed to ${result.w}×${result.h} (from ${slots.white.w}×${slots.white.h}), output ${out}${pre}${ms != null ? `, ${ms} ms` : ''}${result.cleanNote ? `. ${result.cleanNote}` : ''}`, !!result.cleanNote);
   }
   function showReport(r) {
     const box = $('#svReport');
@@ -111,7 +148,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
     if (r.blown > 0.01) line(`${(r.blown * 100).toFixed(1)}% of pixels are pure white in both renders; those cannot be separated from the background.`, true);
   }
   function redraw() {
-    if (view === 'white' || view === 'black') { drawInSquare(ctx, S, slots[view]?.canvas, 'fit', fitRect); return; }
+    if (view === 'white' || view === 'black') { const s = slots[view]; drawInSquare(ctx, S, s && usePre() && s.cleanKey === params.preCleanModel && s.cleanCanvas ? s.cleanCanvas : s?.canvas, 'fit', fitRect); return; }
     const f = drawInSquare(ctx, S, resultCanvas, params.resize, fitRect);
     if (f && params.clearMiddle && maskAlpha) { // preview the cut: the mask covers the whole output square (or the image itself when it is not resized)
       const r = params.resize === 'none' ? f : { x: 0, y: 0, w: S, h: S };
@@ -128,7 +165,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
       const bytes = await api.readFile(p);
       const buf = bytes.slice().buffer;
       const r = await ask({ type: 'load', slot, bytes: buf }, [buf]);
-      slots[slot] = { path: p, name: baseOf(p), w: r.w, h: r.h, canvas: toCanvas(r.rgba, r.w, r.h) };
+      slots[slot] = { path: p, name: baseOf(p), w: r.w, h: r.h, rgba: r.rgba, canvas: toCanvas(r.rgba, r.w, r.h), cleanKey: null, cleanCanvas: null };
       const label = $(slot === 'white' ? '#svWhiteName' : '#svBlackName');
       label.textContent = p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) + 1);
       label.title = p;
@@ -151,7 +188,8 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
   async function saveTo(outPath) {
     if (!slots.white || !slots.black) throw new Error('Open both renders first');
     await ensureMask();
-    const r = await ask({ type: 'export', params: { ...params } });
+    try { await ensureCleanBoth(); } catch { /* the export then uses the raw renders, as the preview does */ }
+    const r = await ask({ type: 'export', params: { ...params, preClean: usePre() } });
     await api.writeFile(outPath, r.png);
     return { path: outPath, w: r.w, h: r.h, bytes: r.png.length };
   }
@@ -181,9 +219,17 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
 
   // ---------------------------------------------------------------- open / close / wiring
   const isOpen = () => !root.hidden;
-  function open() {
+  async function open() {
     root.hidden = false;
-    if (!ui) ui = buildControls($('#svControls'), SPEC, params, changed);
+    try { models = (await api.listModels()).map((m) => m.name); } catch { models = []; }
+    if (!models.includes(params.preCleanModel)) params.preCleanModel = preferredModel();
+    const key = models.join('|');
+    if (!ui || key !== builtFor) { // first open, or the models folder changed since
+      $('#svControls').textContent = '';
+      ui = buildControls($('#svControls'), specFor(models), params, changed);
+      builtFor = key;
+    }
+    ui.sync();
     ensureMask().catch((err) => setMsg(`Could not load the middle mask: ${err.message}`, true));
     redraw();
   }
@@ -194,7 +240,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
   $('#svClose').onclick = close;
   $('#svSave').onclick = () => saveClicked(false);
   $('#svSaveLoad').onclick = () => saveClicked(true);
-  $('#svReset').onclick = () => { Object.assign(params, SOLVE_DEFAULTS); ui?.sync(); updateInfo(); redraw(); schedule(); };
+  $('#svReset').onclick = () => { Object.assign(params, SOLVE_DEFAULTS); params.preCleanModel = preferredModel(); ui?.sync(); updateInfo(); redraw(); schedule(); };
   $('#svView').onchange = (e) => { view = e.target.value; redraw(); };
   root.addEventListener('dragover', (e) => e.preventDefault());
   root.addEventListener('drop', async (e) => { // not stopped: the window-level handler must still clear the drag highlight
@@ -210,6 +256,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
       await loadSlot(slot, p);
     }
   });
+  api.onModelProgress(({ done, total, id }) => { const slot = jobs.get(id); if (slot && total > 1) setMsg(`Cleaning the ${slot} render… tile ${done} of ${total}`); });
   enableSave(false);
 
   return {
@@ -217,6 +264,7 @@ export function initSolver({ api, loadFrame, dirOf, sepOf, baseOf }) {
     params,
     setParams(p) { Object.assign(params, p); ui?.sync(); updateInfo(); redraw(); return run(); },
     get result() { return result; },
+    get cleanState() { return { white: slots.white?.cleanKey || null, black: slots.black?.cleanKey || null, used: result?.usedClean ?? null, models: [...models] }; },
     async saveAndLoad(outPath) { const r = await saveTo(outPath); await loadFrame(outPath); close(); return r; }
   };
 }

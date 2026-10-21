@@ -242,6 +242,34 @@ async function main() {
     const px = await app.ev(`(async () => { const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(outP)})])); const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d'); x.drawImage(bm, 0, 0);
       const a = (px, py) => x.getImageData(px, py, 1, 1).data[3]; return { w: bm.width, centre: a(128, 128), ring: a(128 + 100, 128), corner: a(2, 2), frame: __tf.frame.path, closed: document.querySelector('#solver').hidden }; })()`);
     check('Solve frame: Save and use as frame writes a PNG with the middle cleared, ring kept and corners transparent, and loads it as the frame', magic === '89504e47' && saved.w === 256 && px.w === 256 && px.centre === 0 && px.ring > 200 && px.corner === 0 && px.frame === outP && px.closed, J({ magic, saved: saved.w, px }));
+    // pre-clean with the real model (on by default): both renders get a cleaned copy, the result changes with the option and goes back when it is switched off
+    if (!fs.existsSync(path.join(root, 'models', '1x_PureVision.onnx'))) {
+      console.log('SKIP  Solve frame pre-clean: models/1x_PureVision.onnx not found');
+    } else {
+      const nw = path.join(work, 'Noisy ring white.png'), nb = path.join(work, 'Noisy ring black.png');
+      const pre = await app.ev(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const N = 240, F = [200, 90, 40];
+        const mk = (bg) => { const c = document.createElement('canvas'); c.width = c.height = N; const x = c.getContext('2d'); const d = x.createImageData(N, N); let s = bg + 3;
+          for (let y = 0; y < N; y++) for (let xx = 0; xx < N; xx++) { const r = Math.hypot(xx - 119.5, y - 119.5); const a = r > 70 && r < 105 ? 1 : r > 62 && r <= 70 ? (r - 62) / 8 : r >= 105 && r < 110 ? (110 - r) / 5 : 0; const i = (y * N + xx) * 4; s = (s * 1664525 + 1013904223) >>> 0;
+            const noise = ((xx >> 3) + (y >> 3)) % 2 ? 5 : -5;
+            for (let k = 0; k < 3; k++) d.data[i + k] = Math.max(0, Math.min(255, Math.round(F[k] * a + bg * (1 - a) + noise + (s / 4294967296 - 0.5) * 8))); d.data[i + 3] = 255; }
+          x.putImageData(d, 0, 0); return c; };
+        const save = async (c, p) => window.api.writeFile(p, new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer()));
+        await save(mk(255), ${J(nw)}); await save(mk(0), ${J(nb)});
+        const sv = __tf.solver; await sv.open(); await wait(300);
+        const o = { checkbox: !!document.querySelector('#svControls input[type=checkbox]'), defaultOn: sv.params.preClean === true, model: sv.params.preCleanModel };
+        await sv.loadSlot('white', ${J(nw)}); await sv.loadSlot('black', ${J(nb)});
+        for (let i = 0; i < 100 && sv.cleanState.used !== true; i++) await wait(100);
+        o.on = sv.cleanState; const a = Array.from(sv.result.rgba);
+        await sv.setParams({ preClean: false }); o.off = sv.cleanState; const b = Array.from(sv.result.rgba);
+        await sv.setParams({ preClean: true }); o.again = sv.cleanState;
+        o.differs = a.length === b.length ? a.reduce((n, v, i) => n + (v !== b[i] ? 1 : 0), 0) : -1;
+        sv.close();
+        return o;
+      })()`);
+      check('Solve frame pre-clean: on by default with the model, both renders cleaned, the result changes with the option and is restored when it is turned back on', pre.checkbox && pre.defaultOn && pre.model === '1x_PureVision' && pre.on.white === '1x_PureVision' && pre.on.black === '1x_PureVision' && pre.on.used === true && pre.off.used === false && pre.again.used === true && pre.differs !== 0, J(pre));
+    }
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
   }
 
@@ -598,6 +626,22 @@ async function main() {
     }
     check('model engine: identity and +0.1 models are reproduced exactly at 512, 513, 1000x777, 1001x40, 3x3, 1x1 and 700x1; every call is a multiple of 4; alpha is untouched', worst <= 1 && badCalls === 0 && maxCall <= 516, J({ worst, badCalls, maxCall, calls }));
   }
+
+  // -- Solver pre-clean selection (pure): cleaned copies are used only when both exist and the option is on
+  const pc = await app.ev(`(async () => {
+    const m = await import('./lib/solveframe.js');
+    const mkPair = (wv, bv) => [new Uint8ClampedArray(2 * 2 * 4).fill(wv), new Uint8ClampedArray(2 * 2 * 4).fill(bv)].map((a) => { for (let i = 3; i < a.length; i += 4) a[i] = 255; return a; });
+    const [w, b] = mkPair(153, 51);          // raw pair: Cw 0.6, Cb 0.2 -> alpha 0.6
+    const [cw, cb] = mkPair(255, 0);         // "cleaned" pair: alpha 0
+    const s = m.createSolver(); s.setImage('white', w, 2, 2); s.setImage('black', b, 2, 2);
+    const a = (p) => s.preview({ ...p, solidify: 0, floor: 0, ceiling: 1, threshold: 2 }).rgba[3];   // threshold 2: nothing found, whole image kept
+    const out = { raw: a({ preClean: true }) };                                                      // no cleaned copies yet: raw
+    s.setCleaned('white', cw); out.onlyOne = a({ preClean: true });                                  // only one cleaned copy: still raw
+    s.setCleaned('black', cb); out.both = a({ preClean: true }); out.optionOff = a({ preClean: false });
+    s.setImage('white', w, 2, 2); out.newRenderDropsClean = a({ preClean: true }); out.ready = s.cleanedReady;
+    return out;
+  })()`);
+  check('solve frame: cleaned copies are used only when both exist and pre-clean is on; a new render drops its cleaned copy', pc.raw === 153 && pc.onlyOne === 153 && pc.both === 0 && pc.optionOff === 153 && pc.newRenderDropsClean === 153 && pc.ready.white === false && pc.ready.black === true, J(pc));
 
   // -- RMBG matte post-processing (same maths as the ComfyUI RMBG node), on synthetic mattes
   const mt = await app.ev(`(async () => {

@@ -18,10 +18,13 @@ self.onmessage = async ({ data }) => {
       solver.setImage(data.slot, d.data, d.width, d.height);
       const copy = new Uint8ClampedArray(d.data); // straight copy for the White / Black views
       self.postMessage({ type, id, w: d.width, h: d.height, rgba: copy }, [copy.buffer]);
+    } else if (type === 'setClean') { // the cleaned copy of one render, computed by the model in the main process (null forgets it)
+      solver.setCleaned(data.slot, data.rgba ? new Uint8ClampedArray(data.rgba) : null);
+      self.postMessage({ type, id, ready: solver.cleanedReady });
     } else if (type === 'preview') {
       const t = performance.now();
       const r = solver.preview(data.params);
-      self.postMessage({ type, id, w: r.w, h: r.h, rgba: r.rgba, box: r.box, report: r.report, ms: Math.round(performance.now() - t) }, [r.rgba.buffer]);
+      self.postMessage({ type, id, w: r.w, h: r.h, rgba: r.rgba, box: r.box, report: r.report, usedClean: r.usedClean, ms: Math.round(performance.now() - t) }, [r.rgba.buffer]);
     } else if (type === 'export') {
       const r = solver.exportImage(data.params);
       const png = await toPng(r.rgba, r.w, r.h);

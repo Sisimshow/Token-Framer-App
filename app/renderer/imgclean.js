@@ -11,7 +11,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   const S = canvas.width;
   let models = [], model = '';
   let src = null;                       // { path, name, w, h, rgba, canvas, opaque }
-  let cleanedCanvas = null, info = null, showOriginal = false, busy = false, dirty = false;
+  let cleanedCanvas = null, info = null, showOriginal = false, busy = false, dirty = false, currentJob = '';
   const view = { z: 1, x: 0, y: 0 };    // zoom and pan of the preview (canvas pixels)
 
   const setMsg = (text, warn = false) => { const m = $('#icMsg'); m.textContent = text; m.style.color = warn ? 'var(--warn)' : ''; };
@@ -109,7 +109,8 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
         let r;
         try {
           const rgba = new Uint8Array(job.rgba.buffer.slice(job.rgba.byteOffset, job.rgba.byteOffset + job.rgba.byteLength)); // a copy, the original stays for the before view
-          r = await api.cleanImage(name, rgba, job.w, job.h);
+          currentJob = `ic-${crypto.randomUUID()}`;
+          r = await api.cleanImage(name, rgba, job.w, job.h, currentJob);
         } catch (err) {
           if (job === src && name === model) setMsg(`Could not clean the image: ${err.message}`, true);
           continue;
@@ -125,7 +126,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
       busy = false;
     }
   }
-  api.onModelProgress(({ done, total }) => { if (busy && total > 1) setMsg(`Cleaning… tile ${done} of ${total}`); });
+  api.onModelProgress(({ done, total, id }) => { if (busy && id === currentJob && total > 1) setMsg(`Cleaning… tile ${done} of ${total}`); });
 
   // ---------------------------------------------------------------- saving
   const enableSave = (on) => { $('#icSave').disabled = $('#icSaveOpen').disabled = !on; };

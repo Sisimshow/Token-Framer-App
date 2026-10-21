@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('api', {
   aiMatte: (rgb) => ipcRenderer.invoke('ai:matte', rgb),
   onAiProgress: (fn) => ipcRenderer.on('ai:progress', (_e, p) => fn(p)),
   listModels: () => ipcRenderer.invoke('models:list'),
-  cleanImage: (name, rgba, w, h) => ipcRenderer.invoke('models:clean', name, rgba, w, h),
+  cleanImage: (name, rgba, w, h, reqId) => ipcRenderer.invoke('models:clean', name, rgba, w, h, reqId),
   onModelProgress: (fn) => ipcRenderer.on('models:progress', (_e, p) => fn(p)),
   getEdits: () => ipcRenderer.invoke('edits:get'),
   setEdits: (data) => ipcRenderer.invoke('edits:set', data),

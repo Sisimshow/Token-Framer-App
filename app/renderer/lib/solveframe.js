@@ -2,12 +2,14 @@
 //   TriangulationMatte (alpha measured from the two renders, not guessed) -> two "image over itself" composites (solidify)
 //   -> FastAlphaCropper -> ImageScale (Lanczos) -> a fixed circular mask subtracted from the alpha ("clear the middle").
 // Pure functions, no DOM. Inputs are straight RGBA bytes (alpha ignored: the renders are opaque pictures).
-// Not ported: the workflow first runs both renders through a 1x ESRGAN-style model (1x_PureVision) to clean up compression noise.
+// The workflow first runs both renders through a 1x ESRGAN-style model (1x_PureVision) to clean up compression noise: here that is the optional `preClean`, which uses
+// cleaned copies of the renders supplied by the app (the model itself runs in the main process, see modelrun.cjs).
 import { cropBox, assemble, resizeLanczos, resizeOutput, DEFAULTS as CLEAN } from './cleanframe.js';
 
 export const SOLVE_DEFAULTS = {
   channelMode: 'min', floor: 0.02, ceiling: 0.98, whiteLevel: 1, blackLevel: 0, colorSource: 'white',
-  solidify: 2, threshold: CLEAN.threshold, padding: CLEAN.padding, resize: CLEAN.resize, size: CLEAN.size, clearMiddle: true
+  solidify: 2, threshold: CLEAN.threshold, padding: CLEAN.padding, resize: CLEAN.resize, size: CLEAN.size, clearMiddle: true,
+  preClean: true, preCleanModel: '' // app-level options: which model, if any, was used to prepare the cleaned copies
 };
 const EPS = 1e-6;
 
@@ -96,24 +98,28 @@ export function clearMiddle(rgba, w, h, maskRed, mw, mh) {
 
 /** Two renders being solved. Everything is per pixel, so there are no stage caches: each call recomputes from the two inputs. */
 export function createSolver() {
-  let white = null, black = null, mask = null;
+  let white = null, black = null, mask = null, cleanWhite = null, cleanBlack = null;
   const check = () => {
     if (!white || !black) throw new Error('Open both the white and the black render first');
     if (white.w !== black.w || white.h !== black.h) throw new Error(`The two renders must be the same size (white is ${white.w}×${white.h}, black is ${black.w}×${black.h})`);
   };
   const solve = (p) => {
     p = { ...SOLVE_DEFAULTS, ...p };
-    const { alpha: a0, color, report } = solveMatte(white.rgba, black.rgba, white.w, white.h, p);
+    const useClean = !!(p.preClean && cleanWhite && cleanBlack); // both cleaned copies, or neither (the alpha needs the pair to be treated alike)
+    const { alpha: a0, color, report } = solveMatte(useClean ? cleanWhite : white.rgba, useClean ? cleanBlack : black.rgba, white.w, white.h, p);
     const alpha = solidifyAlpha(a0, p.solidify);
     const box = cropBox(alpha, white.w, white.h, p.threshold, p.padding);
-    return { p, report, box, rgba: assemble(color, alpha, white.w, box), w: box.x1 - box.x0, h: box.y1 - box.y0 };
+    return { p, report, box, usedClean: useClean, rgba: assemble(color, alpha, white.w, box), w: box.x1 - box.x0, h: box.y1 - box.y0 };
   };
   return {
-    setImage(slot, rgba, w, h) { if (slot === 'white') white = { rgba, w, h }; else black = { rgba, w, h }; },
+    setImage(slot, rgba, w, h) { if (slot === 'white') { white = { rgba, w, h }; cleanWhite = null; } else { black = { rgba, w, h }; cleanBlack = null; } }, // a new render drops its cleaned copy
+    /** The pre-cleaned copy of a render (same size as the raw one, straight RGBA); null to forget it. */
+    setCleaned(slot, rgba) { if (slot === 'white') cleanWhite = rgba; else cleanBlack = rgba; },
+    get cleanedReady() { return { white: !!cleanWhite, black: !!cleanBlack }; },
     setMask(redPlane, w, h) { mask = { red: redPlane, w, h }; },
     get ready() { return !!white && !!black; },
     /** Solved and trimmed, not resized, middle not cleared: {rgba, w, h, box, report}. */
-    preview(p) { check(); const r = solve(p); return { rgba: r.rgba, w: r.w, h: r.h, box: r.box, report: r.report }; },
+    preview(p) { check(); const r = solve(p); return { rgba: r.rgba, w: r.w, h: r.h, box: r.box, report: r.report, usedClean: r.usedClean }; },
     /** The final image: {rgba, w, h}. */
     exportImage(p) {
       check();

@@ -37,7 +37,7 @@ Personal-use project, largely AI-written.
 - **Tools > Solve frame background…** makes a transparent frame from the same frame image rendered on a white background and on a black one (triangulation matting: the
   transparency is measured, not guessed). Controls: channel mode, alpha floor / ceiling, white and black levels, which render supplies the colours, solidify, trim, resize
   and **Clear the middle** (a fixed circle about half the image width). It warns when the two renders look swapped or do not line up. Same two save buttons as Clean frame.
-  Based on the author's ComfyUI "Token Background Solver V2" workflow, without its optional image-cleanup model step.
+  Like the workflow, it first runs both renders through the image-cleanup model (**Clean noise first**, on by default when `app/models` has a model; untick it to skip). Based on the author's ComfyUI "Token Background Solver V2" workflow.
 - **Tools > Clean image…** removes compression noise and artifacts from an *opaque* image with a converted restoration model (1x_PureVision), with a zoomable before/after view.
   The model works on RGB only, so it cannot clean an image that already has transparency. Saved as a PNG; **Save and open as image** also opens it in Token Framer.
 - **Converted image models** (used by Clean image) live in `app/models/*.onnx` and are not tracked by git. Recreate one with ComfyUI's Python (ComfyUI need not be running): 
