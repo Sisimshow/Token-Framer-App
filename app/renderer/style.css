@@ -121,5 +121,6 @@ summary { padding: 6px 10px; cursor: pointer; font-weight: 600; user-select: non
 label.check { display: flex; align-items: center; gap: 6px; }
 .tsBar .pair { display: flex; align-items: center; gap: 6px; }
 .tsBar .pair + .pair { margin-left: 10px; }
+.tsView .badge { position: absolute; left: 16px; top: 16px; background: rgba(0,0,0,.6); border-radius: 3px; padding: 1px 6px; font-size: 12px; pointer-events: none; }
 .tsReport { color: var(--muted); font-size: 12px; white-space: pre-line; }
 .tsReport .warn { color: var(--warn); }

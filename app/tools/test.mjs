@@ -245,6 +245,41 @@ async function main() {
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
   }
 
+  // -- Clean image screen: the real model through the main process (skipped when app/models/1x_PureVision.onnx is not there, e.g. a fresh clone)
+  if (!fs.existsSync(path.join(root, 'models', '1x_PureVision.onnx'))) {
+    console.log('SKIP  Clean image: models/1x_PureVision.onnx not found (convert it with tools/convert-model.py to run these checks)');
+  } else {
+    const noisyP = path.join(work, 'Noisy.png'), seeThroughP = path.join(work, 'See through.png'), cleanP = path.join(work, 'Noisy (clean).png');
+    fs.rmSync(cleanP, { force: true });
+    const r = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+      const mk = (transparent) => { const W = 330, H = 222, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); const d = x.createImageData(W, H); let s = 99;
+        for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) { const i = (y * W + xx) * 4; s = (s * 1664525 + 1013904223) >>> 0; const b = 120 + 70 * Math.sin(xx / 21) + (((xx >> 3) + (y >> 3)) % 2 ? 7 : -7) + (s / 4294967296 - 0.5) * 22;
+          d.data[i] = b; d.data[i + 1] = b * 0.9; d.data[i + 2] = b * 0.7; d.data[i + 3] = transparent && xx < 40 ? 0 : 255; }
+        x.putImageData(d, 0, 0); return c; };
+      const save = async (c, p) => window.api.writeFile(p, new Uint8Array(await (await new Promise((res) => c.toBlob(res, 'image/png'))).arrayBuffer()));
+      await save(mk(false), ${J(noisyP)}); await save(mk(true), ${J(seeThroughP)});
+      q('#btnTools').click(); await wait(80); q('#btnCleanImage').click(); await wait(300);
+      const o = { open: !q('#imgclean').hidden, menuClosed: q('#toolsMenu').hidden, models: [...q('#icModel').options].map((x) => x.value), saveOff: q('#icSave').disabled };
+      await __tf.imgclean.loadPath(${J(seeThroughP)}); await wait(200);
+      o.refused = { opaque: __tf.imgclean.opaque, cleaned: !!__tf.imgclean.cleaned, saveOff: q('#icSave').disabled, msg: q('#icMsg').textContent.slice(0, 60) };
+      await __tf.imgclean.loadPath(${J(noisyP)});
+      for (let i = 0; i < 100 && !__tf.imgclean.cleaned; i++) await wait(100);
+      const a = __tf.imgclean.original, b = __tf.imgclean.cleaned;
+      if (b) { const da = a.getContext('2d').getImageData(0, 0, a.width, a.height).data, db = b.getContext('2d').getImageData(0, 0, b.width, b.height).data; let sum = 0, alpha = true; for (let i = 0; i < da.length; i += 4) { for (let c = 0; c < 3; c++) sum += Math.abs(da[i + c] - db[i + c]); if (db[i + 3] !== 255) alpha = false; }
+        o.clean = { w: b.width, h: b.height, meanChange: +(sum / (da.length / 4 * 3)).toFixed(2), alphaKept: alpha, provider: __tf.imgclean.info.provider, ms: __tf.imgclean.info.ms }; }
+      o.saveOn = !q('#icSave').disabled;
+      return o;
+    })()`);
+    check('Clean image: opens from Tools, lists the model, refuses an image with transparency', r.open && r.menuClosed && r.models.includes('1x_PureVision') && r.saveOff && r.refused.opaque === false && !r.refused.cleaned && r.refused.saveOff && /transparency/.test(r.refused.msg), J({ open: r.open, models: r.models, refused: r.refused }));
+    check('Clean image: the real model cleans an opaque image at the same size and the picture changes', r.clean && r.clean.w === 330 && r.clean.h === 222 && r.clean.meanChange > 0.5 && r.clean.alphaKept && r.saveOn, J(r.clean));
+    const saved = await app.ev(`__tf.imgclean.saveAndOpen(${J(cleanP)})`);
+    const magic = fs.existsSync(cleanP) ? fs.readFileSync(cleanP).subarray(0, 4).toString('hex') : '';
+    const after = await app.ev(`({ items: __tf.items.length, path: __tf.items[0]?.path, closed: document.querySelector('#imgclean').hidden })`);
+    check('Clean image: Save and open as image writes a PNG and opens it in the main window', magic === '89504e47' && saved.w === 330 && after.items === 1 && after.path === cleanP && after.closed, J({ magic, saved: saved.w, after }));
+    await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art back for the checks that follow
+  }
+
   // -- Auto center anchors: top keeps the art's top edge fixed while Scale x changes, bottom keeps the bottom edge, centre the middle
   const anc = await app.ev(`(() => { const T = window.__tf; const base = { width: 300, height: 600 }; const cfg = T.eff();
     const edge = (a, m) => { const r = T.resolveCfg({ ...cfg, fitEnabled: true, fitAnchor: a, fitScale: m, fitOffsetX: 0, fitOffsetY: 0 }, base); const w = 512 * r.baseScale, h = w * 2; const y = 256 - w / 2 + r.baseOffsetY; return { top: y, bottom: y + h, mid: y + h / 2 }; };
@@ -516,6 +551,30 @@ async function main() {
   check('solve frame: size mismatch is an error, swapped inputs are detected', /same size/.test(sv.mismatch) && sv.swapped === true, J({ mm: sv.mismatch, sw: sv.swapped }));
   check('solve frame: clear-the-middle subtracts the mask from alpha (and scales it to other sizes)', sv.punch[0] === 255 && sv.punch[1] === 0 && sv.punch[2] === 0 && Math.abs(sv.punch[3] - 100) <= 1 && sv.punchScaled === true, J({ p: sv.punch, s: sv.punchScaled }));
   check('solve frame: a known soft ring is recovered from its white and black renders; the middle is cleared only when asked', sv.round.alphaErr < 0.01 && sv.round.colourErr < 6 && sv.pipe.w === 64 && sv.pipe.centreAlpha === 0 && sv.pipe.ringAlpha > 200 && sv.keepMiddle, J(sv.round) + ' ' + J(sv.pipe));
+
+  // -- Tiled model engine (modelrun.cjs): spandrel-style padding and ComfyUI-style tiling, checked with fake models so no GPU or model file is needed
+  {
+    const { createRequire } = await import('node:module');
+    const mr = createRequire(import.meta.url)(path.join(root, 'modelrun.cjs'));
+    const row = (arr, w, h) => Array.from(mr.padTile(Float32Array.from(arr), w, h, 1).data);
+    const padOk = J(row([1, 2, 3], 3, 1).slice(0, 4)) === J([1, 2, 3, 2]) && J(row([1, 2], 2, 1).slice(0, 4)) === J([1, 2, 1, 1]) && row([7], 1, 1).every((v) => v === 7);
+    const tilesOk = J(mr.axisTiles(1000)) === J([{ pos: 0, len: 512 }, { pos: 480, len: 512 }, { pos: 960, len: 40 }]) && J(mr.axisTiles(513)) === J([{ pos: 0, len: 512 }, { pos: 480, len: 33 }]) && mr.countTiles(1000, 777) === 6 && mr.countTiles(512, 512) === 1;
+    check('model engine: padding mirrors spandrel (reflect, then replicate) and tile positions match comfy tiled_scale', padOk && tilesOk, J({ padOk, tilesOk }));
+    const sizes = [[512, 512], [513, 300], [1000, 777], [1001, 40], [3, 3], [1, 1], [700, 1]];
+    let worst = 0, badCalls = 0, maxCall = 0, calls = 0;
+    for (const [w, h] of sizes) {
+      const rgba = new Uint8Array(w * h * 4).map((_, i) => ((i * 7919 + w) % 251));
+      for (let i = 3; i < rgba.length; i += 4) rgba[i] = (i * 13) % 256; // alpha must come back untouched
+      const identity = async (data, tw, th) => { calls++; if (tw % 4 || th % 4 || tw < 4 || th < 4) badCalls++; maxCall = Math.max(maxCall, tw, th); return data; };
+      const out = await mr.cleanRgba(identity, rgba, w, h);
+      for (let i = 0; i < rgba.length; i++) worst = Math.max(worst, Math.abs(out[i] - rgba[i]));
+      // a pointwise model (+0.1, clamped by the wrapper) must be reproduced exactly however the image is tiled
+      const lift = async (data) => data.map((v) => v + 0.1);
+      const o2 = await mr.cleanRgba(lift, rgba, w, h);
+      for (let i = 0; i < rgba.length; i += 4) for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(o2[i + c] - Math.min(255, Math.round((rgba[i + c] / 255 + 0.1) * 255))));
+    }
+    check('model engine: identity and +0.1 models are reproduced exactly at 512, 513, 1000x777, 1001x40, 3x3, 1x1 and 700x1; every call is a multiple of 4; alpha is untouched', worst <= 1 && badCalls === 0 && maxCall <= 516, J({ worst, badCalls, maxCall, calls }));
+  }
 
   // -- RMBG matte post-processing (same maths as the ComfyUI RMBG node), on synthetic mattes
   const mt = await app.ev(`(async () => {

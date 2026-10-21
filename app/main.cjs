@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, net, screen } = requir
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const modelrun = require('./modelrun.cjs');
 
 const IMG_EXT = /\.(webp|png|jpe?g|bmp|gif|tiff?|avif)$/i;
 const EXT_RANK = { '.webp': 0, '.png': 1, '.jpg': 2, '.jpeg': 2 };
@@ -108,6 +109,48 @@ ipcMain.handle('fs:write', async (_e, p, bytes) => {
   fs.writeFileSync(p, Buffer.from(bytes));
   return true;
 });
+// ---------------------------------------------------------------- image cleanup models (1x ESRGAN-type, converted with tools/convert-model.py)
+const modelDir = () => path.join(__dirname, 'models');
+const cleanSessions = new Map(); // model name -> { session, provider }
+
+function listCleanModels() {
+  try { return fs.readdirSync(modelDir()).filter((f) => /\.onnx$/i.test(f)).map((f) => ({ name: f.replace(/\.onnx$/i, ''), file: f })); } catch { return []; }
+}
+async function getCleanSession(name) {
+  if (cleanSessions.has(name)) return cleanSessions.get(name);
+  const model = listCleanModels().find((m) => m.name === name); // only files that are really in the models folder
+  if (!model) throw new Error(`The model "${name}" is not in the models folder.`);
+  const ort = require('onnxruntime-node');
+  for (const ep of ['dml', 'cpu']) {
+    try {
+      const session = await ort.InferenceSession.create(path.join(modelDir(), model.file), { executionProviders: [ep] });
+      const entry = { session, ort, provider: ep === 'dml' ? 'GPU (DirectML)' : 'CPU' };
+      cleanSessions.set(name, entry);
+      return entry;
+    } catch (err) {
+      console.warn(`onnxruntime provider ${ep} failed for ${name}:`, err.message);
+    }
+  }
+  throw new Error(`Could not load the model "${name}".`);
+}
+
+ipcMain.handle('models:list', async () => listCleanModels());
+/** rgba: straight RGBA bytes. The model sees RGB only; the alpha channel is returned unchanged. */
+ipcMain.handle('models:clean', async (e, name, rgba, w, h) => {
+  if (!(rgba instanceof Uint8Array) || !Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || rgba.length !== w * h * 4) throw new Error('Unexpected image data.');
+  const { session, ort, provider } = await getCleanSession(name);
+  const runModel = async (data, tw, th) => {
+    const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', data, [1, 3, th, tw]) });
+    return out[session.outputNames[0]].data;
+  };
+  const t = Date.now();
+  let last = 0;
+  const result = await modelrun.cleanRgba(runModel, rgba, w, h, {
+    onProgress: (done, total) => { if (Date.now() - last > 100 || done === total) { last = Date.now(); e.sender.send('models:progress', { done, total }); } }
+  });
+  return { rgba: result, ms: Date.now() - t, provider };
+});
+
 ipcMain.handle('app:defaultFrame', async () => path.join(__dirname, 'assets', 'default.webp'));
 ipcMain.handle('fs:exists', async (_e, p) => fs.existsSync(p));
 ipcMain.handle('fs:isDir', async (_e, p) => {

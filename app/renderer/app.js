@@ -5,6 +5,7 @@ import { makeZip } from './lib/zip.js';
 import { MATTE_RES } from './lib/matte.js';
 import { initCleaner } from './cleaner.js';
 import { initSolver } from './solver.js';
+import { initImageCleaner } from './imgclean.js';
 
 const api = window.api;
 const $ = (s, r = document) => r.querySelector(s);
@@ -1268,6 +1269,8 @@ function setup() {
   const setToolsMenu = (open) => { $('#toolsMenu').hidden = !open; $('#btnTools').classList.toggle('active', open); $('#btnTools').setAttribute('aria-expanded', String(open)); };
   const cleaner = (window.__cleaner = initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }));
   window.__solver = initSolver({ api, loadFrame, dirOf, sepOf, baseOf });
+  window.__imgclean = initImageCleaner({ api, openImages, dirOf, sepOf, baseOf });
+  $('#btnCleanImage').onclick = () => { setToolsMenu(false); window.__imgclean.open(); };
   $('#btnCleanFrame').onclick = () => { setToolsMenu(false); cleaner.open(); };
   $('#btnSolveFrame').onclick = () => { setToolsMenu(false); window.__solver.open(); };
   $('#btnTools').onclick = (e) => { e.stopPropagation(); setToolsMenu($('#toolsMenu').hidden); };
@@ -1338,4 +1341,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, eff, compositeFor, resolveCfg }); // DevTools / tests

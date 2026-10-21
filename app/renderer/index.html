@@ -28,7 +28,7 @@
           <button id="btnTools" title="Image and frame cleanup tools" aria-haspopup="true" aria-expanded="false">Open Tools</button>
           <div id="toolsMenu" hidden>
             <div class="tmhead">Image tools</div>
-            <div class="tmnone">None yet</div>
+            <button id="btnCleanImage" title="Remove compression noise and artifacts from an opaque image with a restoration model">Clean image…</button>
             <div class="tmhead">Frame tools</div>
             <button id="btnCleanFrame" title="Refine a frame's transparent edges, trim the empty border and resize it">Clean frame…</button>
             <button id="btnSolveFrame" title="Make a transparent frame from the same render on a white and on a black background">Solve frame background…</button>
@@ -120,6 +120,32 @@
           <div class="tsSaves">
             <button id="svSave" title="Choose where to save the frame as a PNG">Save as…</button>
             <button id="svSaveLoad" class="primary" title="Save the frame as a PNG, then use it as the frame in Token Framer">Save and use as frame</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <div id="imgclean" class="toolscreen" hidden role="dialog" aria-modal="true" aria-label="Clean image">
+    <div class="tsBar">
+      <strong>Clean image</strong>
+      <button id="icOpen" title="Pick an image (or drop one here)">Open image…</button>
+      <span id="icName" class="tsName muted">no image</span>
+      <span class="grow"></span>
+      <label class="check" title="Show the image as it was loaded"><input type="checkbox" id="icOriginal"> Show original</label>
+      <button id="icClose" class="tsClose" title="Back to Token Framer (Esc)">Close</button>
+    </div>
+    <div class="tsMain">
+      <div class="tsView"><canvas id="icPreview" class="tsPreview" width="800" height="800"></canvas><span id="icBadge" class="badge"></span><div class="tsDrop">Drop an image here</div></div>
+      <aside class="tsSide">
+        <div class="tsControls">
+          <div class="row"><label>Model</label><div class="ctl"><select id="icModel"></select></div></div>
+          <div class="hint">The model works on RGB only: it cleans opaque images (for example a render on a solid background) and cannot clean an image that already has transparency. Saved as a PNG.</div>
+        </div>
+        <div class="tsFoot">
+          <div id="icMsg" class="tsMsg hint">Open an image to begin.</div>
+          <div class="tsSaves">
+            <button id="icSave" title="Choose where to save the cleaned image as a PNG">Save as…</button>
+            <button id="icSaveOpen" class="primary" title="Save the cleaned image as a PNG, then open it in Token Framer as the art image">Save and open as image</button>
           </div>
         </div>
       </aside>

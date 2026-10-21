@@ -41,6 +41,12 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   -> shared crop/resize from `cleanframe.js` -> "clear the middle": `assets/middle-mask.png`, a fixed 1000x1000 circle subtracted from alpha, Lanczos-scaled to other sizes),
   run in `lib/solveframe.worker.js`. Order differs from Clean frame on purpose (floor/ceiling before solidify; do not reuse `shapeAlpha`). NOT ported: the workflow's 1x_PureVision
   pre-clean of both renders (an ONNX conversion + licence check would be needed). Parity is only claimed for PNG inputs; JPEG pairs have noise the model would have removed.
+- Image cleanup models: 1x ESRGAN-type `.pth` files (e.g. 1x_PureVision) are converted once with `tools/convert-model.py` (ComfyUI's python; ComfyUI need not run) into
+  `app/models/*.onnx`, which is gitignored (large, licence unchecked). `modelrun.cjs` (pure CJS, no electron) is the engine: spandrel-style padding (right/bottom to a multiple
+  of 4, reflect then replicate) + comfy `tiled_scale` (512 tiles, 32 overlap, feathered), unit-tested with fake models and checked once against ComfyUI itself (max 1 LSB at
+  1001x777). `main.cjs` exposes `models:list` / `models:clean` (onnxruntime-node, DirectML then CPU, sessions cached; only files really in `models/` can be named). RGB only:
+  alpha is passed through, so the Clean image screen (Tools > Clean image…, `renderer/imgclean.js`) REFUSES images that have transparency. The solver's optional "pre-clean"
+  of the white/black renders is not wired up yet (the renders are opaque). A packaged build would need `models/` unpacked from asar.
 - `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).
 - `renderer/app.js`: UI, state, tools, saving. `renderer/lib/composite.js`: layer compositing and placement.
   `renderer/lib/colorremoval.js`: background removal masks. `renderer/lib/holedetect.js`: frame-opening detection.
