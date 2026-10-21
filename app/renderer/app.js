@@ -775,6 +775,7 @@ function onKey(e, down) {
   const k = e.key.toLowerCase();
   if (e.ctrlKey && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (e.ctrlKey && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
+  else if (k === 'escape' && !$('#toolsMenu').hidden) { $('#btnTools').click(); }
   else if (k === 'escape' && state.tool) setTool(state.tool);
   else if (e.ctrlKey && k === 's' && !e.shiftKey) { e.preventDefault(); saveCurrent(false); }
   else if (!e.ctrlKey && !e.altKey && !e.metaKey && TOOL_KEYS[k]) {
@@ -877,9 +878,6 @@ async function loadFrame(p, { keepOrder = false } = {}) {
     const bitmap = await bitmapFromPath(p);
     state.frame?.bitmap.close?.();
     state.frame = { path: p, name: baseOf(p), bitmap, hole: detectHole(bitmap), holeCache: null };
-    $('#frameName').textContent = state.frame.name;
-    $('#frameName').title = p;
-    $('#frameName').classList.remove('muted');
     state.pickSeed = false;
     $('#view').classList.remove('seed');
     showHoleStatus();
@@ -1261,6 +1259,9 @@ function setup() {
   $('#btnImages').onclick = async () => openImages(await api.pickImages({ multi: true, defaultPath: state.lastDir }));
   $('#btnFolder').onclick = async () => { const d = await api.pickFolder(state.lastDir); if (d) openFolder(d); };
   $('#btnFrame').onclick = async () => { const r = await api.pickImages({ multi: false, defaultPath: state.frame ? dirOf(state.frame.path) : state.lastDir }); if (r[0]) loadFrame(r[0]); };
+  const setToolsMenu = (open) => { $('#toolsMenu').hidden = !open; $('#btnTools').classList.toggle('active', open); $('#btnTools').setAttribute('aria-expanded', String(open)); };
+  $('#btnTools').onclick = (e) => { e.stopPropagation(); setToolsMenu($('#toolsMenu').hidden); };
+  document.addEventListener('click', (e) => { if (!$('#toolsMenu').hidden && !$('#toolsWrap').contains(e.target)) setToolsMenu(false); });
   $('#btnFrames').onclick = () => { state.ui.framesOpen = !state.ui.framesOpen; applyFramesOpen(); persist(); };
   $('#btnAll').onclick = () => { state.items.forEach((i) => (i.selected = true)); refreshGrid(); };
   $('#btnNone').onclick = () => { state.items.forEach((i) => (i.selected = false)); refreshGrid(); };

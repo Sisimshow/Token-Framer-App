@@ -22,7 +22,17 @@
         <span class="tlabel">Frame</span>
         <button id="btnFrame" title="Pick a frame image">Open Frame…</button>
         <button id="btnFrames" title="Show or hide the list of recent frames (the default frame is always at the top)">Recent Frames</button>
-        <span id="frameName" class="muted">no frame</span>
+        <span class="sep"></span>
+        <span class="tlabel">Tools</span>
+        <span id="toolsWrap">
+          <button id="btnTools" title="Image and frame cleanup tools" aria-haspopup="true" aria-expanded="false">Open Tools</button>
+          <div id="toolsMenu" hidden>
+            <div class="tmhead">Image tools</div>
+            <div class="tmnone">None yet</div>
+            <div class="tmhead">Frame tools</div>
+            <div class="tmnone">None yet</div>
+          </div>
+        </span>
         <span class="grow"></span>
         <label class="check" title="Show the preview without smoothing, so zoomed-in pixels are sharp blocks"><input type="checkbox" id="pixelView"> Pixel view</label>
       </div>

@@ -33,7 +33,11 @@ input[type=color] { padding: 0; width: 34px; height: 22px; border: 1px solid var
 #left { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 10px; gap: 8px; }
 #right { width: 380px; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
 #toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-#frameName { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toolsWrap { position: relative; }
+#toolsMenu { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; min-width: 220px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 2px; }
+#toolsMenu .tmhead { font-weight: 600; color: var(--muted); padding: 4px 6px 2px; }
+#toolsMenu .tmnone { color: var(--muted); padding: 2px 10px 6px; font-size: 12px; }
+#toolsMenu button { text-align: left; }
 .notice { background: #3b3220; border: 1px solid var(--warn); color: var(--warn); border-radius: 4px; padding: 4px 8px; }
 .notice.ok { background: #1f3326; border-color: #5fbf7a; color: #5fbf7a; }
 

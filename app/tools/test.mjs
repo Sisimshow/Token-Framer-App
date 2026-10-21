@@ -258,7 +258,11 @@ async function main() {
   await sleep(500);
   check('default frame is pinned first, has no remove button, and loads on click', pin.pinned && pin.nm === 'Default' && !pin.x && (await app.ev('__tf.frame.name')) === 'default', J(pin));
   const bar = await app.ev(`[...document.querySelectorAll('#toolbar > *')].map((e) => (e.textContent || e.className).trim()).filter(Boolean).join('|')`);
-  check('toolbar: labels and buttons in the requested order', bar.startsWith('Image|Open Images…|Open Folder…|sep|Frame|Open Frame…|Recent Frames'), bar);
+  check('toolbar: labels and buttons in the requested order', bar.startsWith('Image|Open Images…|Open Folder…|sep|Frame|Open Frame…|Recent Frames|sep|Tools|Open Tools'), bar);
+  const tm = await app.ev(`(async () => { const q = (x) => document.querySelector(x); const w = () => new Promise((r) => setTimeout(r, 80));
+    const out = { noName: !q('#frameName'), start: q('#toolsMenu').hidden }; q('#btnTools').click(); await w(); out.open = !q('#toolsMenu').hidden;
+    q('#view').click(); await w(); out.clickOutside = q('#toolsMenu').hidden; q('#btnTools').click(); await w(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await w(); out.esc = q('#toolsMenu').hidden; return out; })()`);
+  check('Tools menu: frame name gone, opens from Open Tools, closes on outside click and Esc', tm.noName && tm.start && tm.open && tm.clickOutside && tm.esc, J(tm));
   const seedBtn = await app.ev(`(() => { const kids = [...document.querySelectorAll('#panel .row')[0].querySelectorAll('.ctl > *')].map((e) => e.textContent.trim()); return { first: kids[0], second: kids[1], inToolbar: !!document.querySelector('#toolbar #btnSeed, #toolbar #btnDefaultFrame') }; })()`);
   check('Pick center point sits right of Auto center in the panel; no Default button in the toolbar', seedBtn.first === 'Auto center' && seedBtn.second === 'Pick center point' && !seedBtn.inToolbar, J(seedBtn));
 
