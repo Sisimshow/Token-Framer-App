@@ -727,6 +727,17 @@ async function main() {
     check('model engine (scale): a nearest-neighbour 2x and 4x upscaler is reproduced exactly with tiling, padding to multiples of 8 (min 16) and feathering; transparent input is refused for upscalers', worst <= 1 && badSize === 0 && dimsOk && /opaque/.test(refused), J({ worst, badSize, dimsOk, calls, refused }));
   }
 
+  // -- A model whose description is wrong (say a 4x model without its .json, taken as 1x) must error clearly instead of producing a scrambled picture
+  {
+    const { createRequire } = await import('node:module');
+    const mr = createRequire(import.meta.url)(path.join(root, 'modelrun.cjs'));
+    const fourX = async (data, tw, th) => new Float32Array(3 * tw * 4 * th * 4).fill(0.5);   // really a 4x model
+    let msg = '';
+    try { await mr.processRgba(fourX, new Uint8Array(8 * 8 * 4).fill(255), 8, 8, { scale: 1, multiple: 4, minimum: 4 }); } catch (e) { msg = e.message; }
+    const fine = await mr.processRgba(fourX, new Uint8Array(8 * 8 * 4).fill(255), 8, 8, { scale: 4, multiple: 1, minimum: 2 });
+    check('model engine: a model whose description does not match its output size errors with a hint (no scrambled picture); the right description works', /\.json description file/.test(msg) && fine.w === 32 && fine.h === 32, J({ msg: msg.slice(0, 90), w: fine.w }));
+  }
+
   // -- RMBG matte post-processing (same maths as the ComfyUI RMBG node), on synthetic mattes
   const mt = await app.ev(`(async () => {
     const { matteToAlpha, MATTE_RES: R } = await import('./lib/matte.js');

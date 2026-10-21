@@ -280,7 +280,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
 
   return {
     open, close, isOpen, loadSlot, saveTo,
-    params,
+    get params() { return params; },
     setParams(p) { Object.assign(params, p); ui?.sync(); updateInfo(); redraw(); return run(); },
     get result() { return result; },
     get mode() { return mode; },

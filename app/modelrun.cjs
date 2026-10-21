@@ -44,6 +44,7 @@ function withSpandrelPadding(runModel, { c = 3, scale = 1, multiple = 4, minimum
     const p = padTile(data, w, h, c, multiple, minimum);
     const out = await runModel(p.data, p.w, p.h);
     const ow = w * scale, oh = h * scale, pow = p.w * scale, poh = p.h * scale;
+    if (out.length !== c * pow * poh) throw new Error(`The model returned ${out.length} values but a ${scale}x model should return ${c * pow * poh} for this tile. Its .json description file is probably missing or wrong (rerun tools/convert-model.py).`);
     const res = new Float32Array(c * ow * oh);
     for (let ch = 0; ch < c; ch++) {
       for (let y = 0; y < oh; y++) {

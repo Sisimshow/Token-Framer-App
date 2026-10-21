@@ -42,8 +42,10 @@ Personal-use project, largely AI-written.
   The model works on RGB only, so it cannot clean an image that already has transparency. Saved as a PNG; **Save and open as image** also opens it in Token Framer.
 - **Tools > Upscale image…** enlarges an *opaque* image 4× with an upscaling model (4x-UltraSharp, 4x-AnimeSharp, 4x-UltraMix_Smooth, the 4x-UltraSharpV2 DAT model) on the same
   screen as Clean image; saved as a PNG.
-- **Converted image models** (used by Clean image) live in `app/models/*.onnx` and are not tracked by git. Recreate one with ComfyUI's Python (ComfyUI need not be running): 
-  `E:\SwarmUI\dlbackend\comfy\python_embeded\python.exe app	ools\convert-model.py "<path>x_PureVision.pth" app\modelsx_PureVision.onnx`.
+- **Converted image models** (used by Clean image, Upscale image and the solvers' pre-clean) live in `app/models/`: five at the moment, 1x_PureVision, 4x-UltraSharp, 4x-AnimeSharp,
+  4x-UltraMix_Smooth and 4x-UltraSharpV2. The large `.onnx` files are not tracked by git; each comes with a small `<name>.json` (scale and size rules) that is tracked and must stay
+  next to its `.onnx`. Recreate one with ComfyUI's Python (ComfyUI need not be running):
+  `E:\SwarmUI\dlbackend\comfy\python_embeded\python.exe app\tools\convert-model.py "<path>\4x-UltraSharp.pth" app\models\4x-UltraSharp.onnx`.
 - **Tools > Solve image background…** is the same white-and-black solver for ordinary art: it keeps the whole picture (no trim, resize or cut-out middle) and **Save and open as image** opens
   the result as the art image. Based on the author's "Image Background Solver V2" workflow.
 - Settings persist in the Electron user-data folder. F12 opens DevTools.
