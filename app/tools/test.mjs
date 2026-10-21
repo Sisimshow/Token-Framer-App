@@ -194,6 +194,16 @@ async function main() {
       return o;
     })()`);
     check('Clean frame: opens from Tools, builds its controls, cleans an image in the worker', ui.open && ui.menuClosed && ui.rows >= 10 && ui.loaded && ui.keysIgnored && ui.params === 256, J(ui));
+    const drop = await app.ev(`(async () => {
+      __tf.cleaner.open();
+      const before = __tf.items.length;
+      window.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true }));
+      const during = document.body.classList.contains('dragging');
+      document.querySelector('#cleaner').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }));
+      await new Promise((r) => setTimeout(r, 100));
+      return { during, after: document.body.classList.contains('dragging'), items: __tf.items.length === before };
+    })()`);
+    check('Clean frame: a drop on the overlay clears the drag highlight and leaves the batch alone', drop.during && !drop.after && drop.items, J(drop));
     const frameBefore = await app.ev('__tf.frame.path');
     const saved = await app.ev(`__tf.cleaner.saveAndLoad(${J(outPng)})`);
     const magic = fs.existsSync(outPng) ? fs.readFileSync(outPng).subarray(0, 4).toString('hex') : '';

@@ -210,9 +210,9 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
   $('#cfSaveLoad').onclick = () => saveClicked(true);
   $('#cfReset').onclick = () => { params = { ...DEFAULTS }; syncControls(); updateInfo(); redraw(); schedule(); };
   $('#cfOriginal').onchange = (e) => { showOriginal = e.target.checked; redraw(); };
-  root.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
-  root.addEventListener('drop', async (e) => {
-    e.preventDefault(); e.stopPropagation();
+  root.addEventListener('dragover', (e) => e.preventDefault());
+  root.addEventListener('drop', async (e) => { // not stopped: the window-level handler must still clear the drag highlight (main-window handleDrop ignores it while we are open)
+    e.preventDefault();
     const f = e.dataTransfer.files[0];
     const p = f && api.pathForFile(f);
     if (p) await loadPath(p);
