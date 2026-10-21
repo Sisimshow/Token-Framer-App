@@ -62,7 +62,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     const list = modeModels(), sel = $('#icModel');
     sel.textContent = '';
     for (const m of list) { const o = document.createElement('option'); o.value = m.name; o.textContent = m.scale > 1 ? `${m.name} (${m.scale}×)` : m.name; sel.append(o); }
-    if (!list.some((m) => m.name === model)) model = (mode === 'upscale' && list.find((m) => m.name === '4x-UltraSharpV2')?.name) || list[0]?.name || ''; // the Upscale (Basic) workflow's default
+    if (!list.some((m) => m.name === model)) model = (mode === 'upscale' && list.find((m) => m.name === '4x-UltraMix_Smooth')?.name) || list[0]?.name || ''; // the Upscale (Basic) workflow's default
     sel.value = model;
     refreshScales();
     if (!list.length) setMsg(`No ${mode === 'upscale' ? 'upscaling' : 'cleanup'} models found. Convert one with tools/convert-model.py (see the README) and put the .onnx file in the models folder.`, true);

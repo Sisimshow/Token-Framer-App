@@ -371,8 +371,8 @@ async function main() {
   }
 
   // -- Upscale image mode: the same screen offers only the Nx models, a 4x model really makes the picture 4x larger, transparency is refused, output is a PNG
-  if (!fs.existsSync(path.join(root, 'models', '4x-UltraSharp.onnx'))) {
-    console.log('SKIP  Upscale image: models/4x-UltraSharp.onnx not found (convert it with tools/convert-model.py to run these checks)');
+  if (!fs.existsSync(path.join(root, 'models', '4x-UltraMix_Smooth.onnx'))) {
+    console.log('SKIP  Upscale image: models/4x-UltraMix_Smooth.onnx not found (convert it with tools/convert-model.py to run these checks)');
   } else {
     const smallP = path.join(work, 'Tiny.png'), glassP = path.join(work, 'Tiny glass.png'), upP = path.join(work, 'Tiny (4x).png');
     fs.rmSync(upP, { force: true });
@@ -386,7 +386,7 @@ async function main() {
       q('#btnTools').click(); await wait(80); q('#btnUpscaleImage').click(); await wait(300);
       const o = { open: !q('#imgclean').hidden, mode: __tf.imgclean.mode, title: q('#icTitle').textContent, models: [...q('#icModel').options].map((x) => x.value) };
       await __tf.imgclean.loadPath(${J(smallP)}); await wait(300);
-      o.waiting = { cleaned: !!__tf.imgclean.cleaned, processOn: !q('#icProcess').disabled, saveOff: q('#icSave').disabled, scale: __tf.imgclean.scale, row: !q('#icScaleRow').hidden, opts: [...q('#icScale').options].map((x) => x.value) };
+      o.waiting = { cleaned: !!__tf.imgclean.cleaned, processOn: !q('#icProcess').disabled, saveOff: q('#icSave').disabled, scale: __tf.imgclean.scale, model: __tf.imgclean.model, row: !q('#icScaleRow').hidden, opts: [...q('#icScale').options].map((x) => x.value) };
       await __tf.imgclean.process();
       const c = __tf.imgclean.cleaned; o.out = c ? [c.width, c.height] : null; o.info = __tf.imgclean.info; o.saveOn = !q('#icSave').disabled;
       await __tf.imgclean.loadPath(${J(glassP)}); await wait(300);
@@ -394,7 +394,7 @@ async function main() {
       await __tf.imgclean.loadPath(${J(smallP)}); await __tf.imgclean.process();
       return o;
     })()`);
-    check('Upscale image: a loaded image waits for Process; the factor defaults to 4x and offers 2x, 3x, 4x', u.waiting.cleaned === false && u.waiting.processOn && u.waiting.saveOff && u.waiting.scale === 4 && u.waiting.row && J(u.waiting.opts) === J(['2', '3', '4']), J(u.waiting));
+    check('Upscale image: a loaded image waits for Process; the factor defaults to 4x and offers 2x, 3x, 4x', u.waiting.cleaned === false && u.waiting.processOn && u.waiting.saveOff && u.waiting.scale === 4 && u.waiting.model === '4x-UltraMix_Smooth' && u.waiting.row && J(u.waiting.opts) === J(['2', '3', '4']), J(u.waiting));
     check('Upscale image: opens in upscale mode with only the Nx models, a 4x model makes the picture 4x larger, transparency is refused', u.open && u.mode === 'upscale' && u.title === 'Upscale image' && u.models.length >= 2 && u.models.every((m) => /^4x/.test(m)) && !u.models.includes('1x_PureVision') && u.out && u.out[0] === 480 && u.out[1] === 320 && u.info.scale === 4 && u.saveOn && u.refused.opaque === false && !u.refused.cleaned && u.refused.saveOff, J(u));
     const saved = await app.ev(`__tf.imgclean.saveTo(${J(upP)})`);
     const magic = fs.existsSync(upP) ? fs.readFileSync(upP).subarray(0, 4).toString('hex') : '';
