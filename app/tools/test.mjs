@@ -416,6 +416,19 @@ async function main() {
       return o;
     })()`);
     check('Upscale image: 2x and 3x shrink the 4x result (identical to the Lanczos resize of it, same model run), 4x restores it, and changing the model asks for Process again', J(sc.two) === J([240, 160, 2, true]) && sc.maxDiff === 0 && J(sc.three) === J([360, 240, 3]) && sc.saveOn && sc.threeSaved.w === 360 && J(sc.four) === J([480, 320, 4]) && sc.afterModel.cleaned === false && sc.afterModel.saveOff && sc.afterModel.processOn, J(sc));
+    // a very large run asks first (declining leaves everything untouched); a normal one never asks
+    const heavy = await app.ev(`(async () => {
+      const kit = await import('./ui-kit.js'); const ic = __tf.imgclean; const o = {}; const asked = []; const real = window.confirm;
+      window.confirm = (m) => { asked.push(m); return false; };
+      o.small = kit.confirmHeavy(1000, 1000) === true; o.smallAsked = asked.length;
+      o.big = kit.confirmHeavy(6000, 5000, 'The 4× model') === false; o.msg = asked[0] || '';
+      const c = document.createElement('canvas'); c.width = c.height = 1600; c.getContext('2d').fillRect(0, 0, 1600, 1600);
+      await window.api.writeFile(${J(path.join(work, 'Big.png'))}, new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer()));
+      await ic.loadPath(${J(path.join(work, 'Big.png'))}); await ic.process();   // 1600 x 1600 x 16 = 41 megapixels from a 4x model
+      o.declined = { asked: asked.length, cleaned: !!ic.cleaned, processOn: !document.querySelector('#icProcess').disabled, msg: document.querySelector('#icMsg').textContent.slice(0, 9) };
+      window.confirm = real; return o;
+    })()`);
+    check('Upscale image: a run over 25 megapixels asks for confirmation first (declining does nothing), a normal one does not', heavy.small && heavy.smallAsked === 0 && heavy.big && /6000×5000/.test(heavy.msg) && /demanding/.test(heavy.msg) && heavy.declined.asked === 2 && !heavy.declined.cleaned && heavy.declined.processOn && heavy.declined.msg === 'Cancelled', J(heavy));
     const switched = await app.ev(`(async () => { await __tf.imgclean.open('clean'); const o = { mode: __tf.imgclean.mode, rowHidden: document.querySelector('#icScaleRow').hidden, models: [...document.querySelector('#icModel').options].map((x) => x.value) }; __tf.imgclean.close(); return o; })()`);
     check('Clean image mode after upscale lists only the 1x models and has no factor row', switched.mode === 'clean' && switched.rowHidden && switched.models.includes('1x_PureVision') && switched.models.every((m) => /^1x/.test(m)), J(switched));
   }

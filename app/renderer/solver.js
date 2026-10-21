@@ -3,7 +3,7 @@
 // Maths in lib/solveframe.js, run by lib/solveframe.worker.js. Same screen layout as Clean frame (see cleaner.js).
 import { fitRect } from './lib/cleanframe.js';
 import { SOLVE_DEFAULTS } from './lib/solveframe.js';
-import { buildControls, drawInSquare, makeRpc } from './ui-kit.js';
+import { buildControls, confirmHeavy, drawInSquare, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 
@@ -68,6 +68,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
   /** The "Process" button: runs the pre-clean model over both renders, then re-solves with the cleaned copies. */
   async function processClicked() {
     if (cleaning || !usePre()) return;
+    if (!confirmHeavy(Math.max(slots.white.w, slots.black.w), Math.max(slots.white.h, slots.black.h), 'The pre-clean')) return;
     cleaning = true; refreshButtons();
     try {
       await ensureCleanBoth();

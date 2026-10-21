@@ -1,5 +1,17 @@
 // Small stateless helpers shared by the full-window tool screens (Clean frame, Solve frame background).
 
+/** A model run whose output has more pixels than this asks first (about 5000 x 5000): it can take long, use a lot of memory and slow the whole computer down. */
+export const HEAVY_PIXELS = 25e6;
+/** Asks before a heavy model run. `w` x `h` is the size the model itself will output. Returns true to go ahead. */
+export function confirmHeavy(w, h, what = 'This') {
+  if (w * h <= HEAVY_PIXELS) return true;
+  return confirm(`${what} will work on a ${w}×${h} image (${(w * h / 1e6).toFixed(0)} megapixels).
+
+That is very demanding: it can take a long time, use a lot of memory and make your computer sluggish while it runs.
+
+Continue?`);
+}
+
 export const el = (tag, cls, text) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;

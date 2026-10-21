@@ -2,7 +2,7 @@
 // with a before/after view. One screen, two modes: the mode only decides which models are offered and how things are named.
 // The models see RGB only, so an image that already has transparency cannot be processed and is refused. Inference runs in the main process (onnxruntime-node).
 import { fitRect } from './lib/cleanframe.js';
-import { makeRpc } from './ui-kit.js';
+import { confirmHeavy, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 
@@ -121,6 +121,8 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   async function run() {
     const job = src, name = model;
     if (busy || !job || !job.opaque || !name) return;
+    const ms = models.find((m) => m.name === name)?.scale || 1;
+    if (!confirmHeavy(job.w * ms, job.h * ms, ms > 1 ? `The ${ms}× model` : 'The model')) { setMsg(`Cancelled. ${readyMsg()}`); return; }
     busy = true;
     cleanedCanvas = null; info = null; raw = null;
     refreshButtons(); redraw();

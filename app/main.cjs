@@ -112,7 +112,7 @@ ipcMain.handle('fs:write', async (_e, p, bytes) => {
 // ---------------------------------------------------------------- image cleanup models (1x ESRGAN-type, converted with tools/convert-model.py)
 const modelDir = () => path.join(__dirname, 'models');
 const cleanSessions = new Map(); // model name -> { session, provider }
-const MAX_OUTPUT_PIXELS = 50e6;   // an upscale result bigger than this (about 7000 x 7000) would need more memory than is sensible
+const MAX_OUTPUT_PIXELS = 100e6;  // the hard stop (about 10000 x 10000); the renderer asks for confirmation well before this (HEAVY_PIXELS in ui-kit.js)
 
 /** Models in the models folder with what the converter wrote next to each (scale and size rules); an .onnx without that file is taken to be a 1x model needing multiples of 4. */
 function listCleanModels() {
