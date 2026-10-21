@@ -68,7 +68,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
     const jobId = `sv-${crypto.randomUUID()}`;
     jobs.set(jobId, slot);
     try {
-      setMsg(`Cleaning the ${slot} render…`);
+      setMsg(`Processing the ${slot} render…`);
       const r = await api.cleanImage(name, new Uint8Array(s.rgba), s.w, s.h, jobId);
       if (slots[slot] !== s || params.preCleanModel !== name) return;     // replaced meanwhile
       s.cleanCanvas = toCanvas(new Uint8ClampedArray(r.rgba.buffer, r.rgba.byteOffset, r.rgba.byteLength), s.w, s.h);
@@ -275,7 +275,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
       await loadSlot(slot, p);
     }
   });
-  api.onModelProgress(({ done, total, id }) => { const slot = jobs.get(id); if (slot && total > 1) setMsg(`Cleaning the ${slot} render… tile ${done} of ${total}`); });
+  api.onModelProgress(({ done, total, id }) => { const slot = jobs.get(id); if (slot && total > 1) setMsg(`Processing the ${slot} render… tile ${done} of ${total}`); });
   enableSave(false);
 
   return {

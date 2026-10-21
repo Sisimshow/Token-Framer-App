@@ -107,14 +107,14 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
         const job = src, name = model;
         if (!job || !job.opaque || !name) break;
         enableSave(false);
-        setMsg('Cleaning…');
+        setMsg('Processing…');
         let r;
         try {
           const rgba = new Uint8Array(job.rgba.buffer.slice(job.rgba.byteOffset, job.rgba.byteOffset + job.rgba.byteLength)); // a copy, the original stays for the before view
           currentJob = `ic-${crypto.randomUUID()}`;
           r = await api.cleanImage(name, rgba, job.w, job.h, currentJob);
         } catch (err) {
-          if (job === src && name === model) setMsg(`Could not clean the image: ${err.message}`, true);
+          if (job === src && name === model) setMsg(`Could not process the image: ${err.message}`, true);
           continue;
         }
         if (job !== src || name !== model) { dirty = true; continue; } // superseded while it ran: never show it
@@ -128,7 +128,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
       busy = false;
     }
   }
-  api.onModelProgress(({ done, total, id }) => { if (busy && id === currentJob && total > 1) setMsg(`Cleaning… tile ${done} of ${total}`); });
+  api.onModelProgress(({ done, total, id }) => { if (busy && id === currentJob && total > 1) setMsg(`Processing… tile ${done} of ${total}`); });
 
   // ---------------------------------------------------------------- saving
   const enableSave = (on) => { $('#icSave').disabled = $('#icSaveOpen').disabled = !on; };
