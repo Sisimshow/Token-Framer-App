@@ -118,9 +118,9 @@ const WAIT_BASE = 'new Promise((r) => { const t = setInterval(() => { if (__tf.b
 const VARIANTS = {
   basic: {},
   circle_scaled: { maskShape: 'circle', baseScale: 0.8, fitEnabled: false, bgEnabled: true, bgColor: '#303060' },
-  popout_color: { popOutEnabled: true, crEnabled: true, crColor: '#20a040', popOutDegrees: 200 },
+  popout_color: { crPopOutOnly: true, popOutEnabled: true, crEnabled: true, crColor: '#20a040', popOutDegrees: 200 },
   popout_edits: {
-    popOutEnabled: true, popOutDegrees: 200,
+    crPopOutOnly: true, popOutEnabled: true, popOutDegrees: 200,
     popEdits: [
       { type: 'wand', x: 5, y: 5, tol: 20, contiguous: true },
       { type: 'brush', mode: 'erase', r: 12, pts: [[200, 60], [230, 80], [260, 110]] },

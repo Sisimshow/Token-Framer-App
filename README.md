@@ -20,8 +20,8 @@ Personal-use project, largely AI-written.
   or any pop-out setting (enable, arc, rotation, center), since those belong to one image.
 - **Save all** (appears with 2+ images) writes `<name> Token.webp` (or `.png`, see Output > Format) next to each source. **Save token** / **Save as…** do the current image.
 - Auto center needs a closed frame with a transparent middle; if it can't find it, use **Pick center point**.
-- **Background removal** (for pop-out tokens). With **Pop-out layer only** on (default), the cutout only affects the
-  pop-out layer above the frame; the art under the frame stays intact. Untick it to cut out both layers.
+- **Background removal** (for pop-out tokens). With **Pop-out layer only** on (off by default), the cutout only affects the
+  pop-out layer above the frame; the art under the frame stays intact. Leave it off to cut out both layers.
   - Remove color (+ Threshold / Edges only / Feather / Grow / Defringe) works automatically on every image, including in **Save all**.
   - Manual tools, for the current image only: **Wand** (click a background; Tolerance and Contiguous below),
     **Brush** (Erase or Restore mode, Brush size), **Rectangle** (erases the box). Each stroke/click is one edit:
