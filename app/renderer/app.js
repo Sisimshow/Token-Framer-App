@@ -3,6 +3,7 @@ import { buildEditedMask, applyRemovalMask, stampStroke } from './lib/colorremov
 import { detectHole, holeMaskCanvas } from './lib/holedetect.js';
 import { makeZip } from './lib/zip.js';
 import { MATTE_RES } from './lib/matte.js';
+import { initCleaner } from './cleaner.js';
 
 const api = window.api;
 const $ = (s, r = document) => r.querySelector(s);
@@ -763,6 +764,7 @@ function toolUp(e) {
 
 const TOOL_KEYS = { w: 'wand', b: 'brush', r: 'rect' }; // single-key shortcuts for the cutout tools
 function onKey(e, down) {
+  if (window.__cleaner?.isOpen()) { if (down && e.key === 'Escape') window.__cleaner.close(); return; } // the Clean frame overlay owns the keyboard while it is open
   const t = e.target;
   const typing = t && ((t.tagName === 'INPUT' && !['range', 'checkbox', 'color'].includes(t.type)) || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
   if (e.code === 'Space' && state.tool && !typing) {
@@ -1224,6 +1226,7 @@ async function zipAll() {
 
 /** Ctrl+V: a copied image file opens like a dropped one; raw clipboard pixels become an unsaved item. */
 async function handlePaste(e) {
+  if (window.__cleaner?.isOpen()) return;
   const t = e.target;
   if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && t.type === 'text'))) return;
   const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
@@ -1245,6 +1248,7 @@ async function handlePaste(e) {
 
 // ---------------------------------------------------------------- wiring
 async function handleDrop(e) {
+  if (window.__cleaner?.isOpen()) return;
   const paths = [...e.dataTransfer.files].map((f) => api.pathForFile(f)).filter(Boolean);
   if (!paths.length) return;
   for (const p of paths) {
@@ -1260,6 +1264,8 @@ function setup() {
   $('#btnFolder').onclick = async () => { const d = await api.pickFolder(state.lastDir); if (d) openFolder(d); };
   $('#btnFrame').onclick = async () => { const r = await api.pickImages({ multi: false, defaultPath: state.frame ? dirOf(state.frame.path) : state.lastDir }); if (r[0]) loadFrame(r[0]); };
   const setToolsMenu = (open) => { $('#toolsMenu').hidden = !open; $('#btnTools').classList.toggle('active', open); $('#btnTools').setAttribute('aria-expanded', String(open)); };
+  const cleaner = (window.__cleaner = initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }));
+  $('#btnCleanFrame').onclick = () => { setToolsMenu(false); cleaner.open(); };
   $('#btnTools').onclick = (e) => { e.stopPropagation(); setToolsMenu($('#toolsMenu').hidden); };
   document.addEventListener('click', (e) => { if (!$('#toolsMenu').hidden && !$('#toolsWrap').contains(e.target)) setToolsMenu(false); });
   $('#btnFrames').onclick = () => { state.ui.framesOpen = !state.ui.framesOpen; applyFramesOpen(); persist(); };
@@ -1328,4 +1334,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, eff, compositeFor, resolveCfg }); // DevTools / tests

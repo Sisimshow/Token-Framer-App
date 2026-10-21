@@ -30,7 +30,7 @@
             <div class="tmhead">Image tools</div>
             <div class="tmnone">None yet</div>
             <div class="tmhead">Frame tools</div>
-            <div class="tmnone">None yet</div>
+            <button id="btnCleanFrame" title="Refine a frame's transparent edges, trim the empty border and resize it">Clean frame…</button>
           </div>
         </span>
         <span class="grow"></span>
@@ -74,6 +74,33 @@
         <button id="btnZip" hidden title="Render every ticked image and save them together as one .zip of '&lt;name&gt; Token.webp' files">Save all as ZIP</button>
       </div>
     </aside>
+  </div>
+  <div id="cleaner" hidden role="dialog" aria-modal="true" aria-label="Clean frame">
+    <div id="cfBar">
+      <strong>Clean frame</strong>
+      <button id="cfOpen" title="Pick a frame image (or drop one here)">Open image…</button>
+      <span id="cfName" class="muted">no image</span>
+      <span class="grow"></span>
+      <label class="check" title="Show the image as it was loaded"><input type="checkbox" id="cfOriginal"> Show original</label>
+      <button id="cfClose" title="Back to Token Framer (Esc)">Close</button>
+    </div>
+    <div id="cfMain">
+      <div id="cfView"><canvas id="cfPreview" width="800" height="800"></canvas><div id="cfDrop">Drop a frame image here</div></div>
+      <aside id="cfSide">
+        <div id="cfControls"></div>
+        <div id="cfFoot">
+          <div id="cfMsg" class="hint">Open an image to begin.</div>
+          <div id="cfBtns">
+            <button id="cfReset" title="Put every slider back to its default">Reset</button>
+            <span class="grow"></span>
+          </div>
+          <div id="cfSaves">
+            <button id="cfSave" title="Choose where to save the cleaned frame as a PNG">Save as…</button>
+            <button id="cfSaveLoad" class="primary" title="Save the cleaned frame as a PNG, then use it as the frame in Token Framer">Save and use as frame</button>
+          </div>
+        </div>
+      </aside>
+    </div>
   </div>
   <script type="module" src="app.js"></script>
 </body>

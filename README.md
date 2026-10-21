@@ -31,6 +31,9 @@ Personal-use project, largely AI-written.
   - Manual edits belong to one image and are not saved between sessions, so **Save all** applies each image's own edits
     and uses color removal for everything else.
 - **Output > WebP quality:** 100% is the best lossy setting (sent to the encoder as 99%, like Photoshop's 100). Tick **Lossless** for a true lossless WebP, which is much larger.
+- **Tools > Clean frame…** opens a separate screen for tidying a frame image: refine its transparent edges (radius, smoothing, alpha floor / ceiling, solidify),
+  trim the empty border (threshold, padding) and resize it. **Save as…** writes a PNG; **Save and use as frame** also loads it as the frame in Token Framer.
+  Based on the author's ComfyUI "Token Cleaner" workflow; the resize matches the Pillow Lanczos that workflow uses.
 - Settings persist in the Electron user-data folder. F12 opens DevTools.
 
 ## License

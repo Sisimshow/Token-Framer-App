@@ -29,6 +29,12 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   maths (copied from the ComfyUI RMBG node); the `{type:'ai'}` edit in `colorremoval.js` turns the matte into a removal mask.
 - Recent frames sidebar (`#frames`, toggled by the toolbar "Recent Frames" button; the default frame is always pinned first): `state.recentFrames` (max 24, saved in `settings.json`) is fed by
   `loadFrame`; clicking a tile loads that frame only (`keepOrder` so the list doesn't jump). Thumbnails are generated lazily, memory-only.
+- Clean frame tool (Tools > Clean frame…): a full-window overlay (`#cleaner`, `renderer/cleaner.js`) over the main UI. The maths is `renderer/lib/cleanframe.js`
+  (pure, a port of the author's ComfyUI "Token Cleaner" workflow: guided-filter alpha refine -> floor/solidify/ceiling -> colour bleed -> crop -> resize), run in
+  `lib/cleanframe.worker.js` (module worker; stage caches: guided filter by radius+smoothing, colour by radius). The export resize is a Pillow-exact Lanczos3
+  (premultiplied 8-bit, 22-bit fixed point); the preview skips it. Saves PNG only (lossy WebP would damage the alpha edges), default name always contains
+  "Frame" so folder mode never treats it as art. While the overlay is open `onKey`, paste and drop on the main window are ignored. Deliberately not ported:
+  the node's decontaminate option (hard-coded off in the workflow). Fit+pad is the default resize; "Stretch" matches ComfyUI's behaviour.
 - `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).
 - `renderer/app.js`: UI, state, tools, saving. `renderer/lib/composite.js`: layer compositing and placement.
   `renderer/lib/colorremoval.js`: background removal masks. `renderer/lib/holedetect.js`: frame-opening detection.

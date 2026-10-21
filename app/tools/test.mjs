@@ -174,6 +174,34 @@ async function main() {
     let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return { w: bm.width, mean: s / a.length }; })()`);
   check('export matches preview compositing (webp q95)', exp.w === SIZE && exp.mean < 2, `mean ${exp.mean.toFixed(3)}/255`);
 
+  // -- Clean frame overlay: opens from Tools, cleans the default frame in the worker, saves a PNG, and "save and use as frame" loads it
+  {
+    const frameWebp = path.join(root, 'assets', 'default.webp');
+    const outPng = path.join(work, 'Default Frame (clean).png');
+    fs.rmSync(outPng, { force: true });
+    const ui = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      q('#btnTools').click(); await wait(80); q('#btnCleanFrame').click(); await wait(80);
+      const o = { open: !q('#cleaner').hidden, menuClosed: q('#toolsMenu').hidden, rows: document.querySelectorAll('#cfControls .row').length };
+      await __tf.cleaner.loadPath(${J(frameWebp)});
+      const r = __tf.cleaner.result;
+      o.loaded = !!r && r.w > 0 && r.h > 0 && r.w <= 1500; o.cropped = r ? [r.w, r.h] : null;
+      // global shortcuts must not reach the main window while the overlay is open
+      const toolBefore = __tf.tool; window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w' })); await wait(100);
+      o.keysIgnored = __tf.tool === toolBefore;
+      await __tf.cleaner.setParams({ radius: 2, solidify: 1, size: 256 });
+      o.params = __tf.cleaner.params.size;
+      return o;
+    })()`);
+    check('Clean frame: opens from Tools, builds its controls, cleans an image in the worker', ui.open && ui.menuClosed && ui.rows >= 10 && ui.loaded && ui.keysIgnored && ui.params === 256, J(ui));
+    const frameBefore = await app.ev('__tf.frame.path');
+    const saved = await app.ev(`__tf.cleaner.saveAndLoad(${J(outPng)})`);
+    const magic = fs.existsSync(outPng) ? fs.readFileSync(outPng).subarray(0, 4).toString('hex') : '';
+    const after = await app.ev(`({ frame: __tf.frame.path, closed: document.querySelector('#cleaner').hidden, name: __tf.frame.name })`);
+    check('Clean frame: Save and use as frame writes a PNG at the chosen size and loads it as the frame', magic === '89504e47' && saved.w === 256 && saved.h === 256 && after.frame === outPng && after.frame !== frameBefore && after.closed, J({ magic, saved, after }));
+    await app.ev(`__tf.loadFrame(${J(frameWebp)}, { keepOrder: true })`);
+  }
+
   // -- Auto center anchors: top keeps the art's top edge fixed while Scale x changes, bottom keeps the bottom edge, centre the middle
   const anc = await app.ev(`(() => { const T = window.__tf; const base = { width: 300, height: 600 }; const cfg = T.eff();
     const edge = (a, m) => { const r = T.resolveCfg({ ...cfg, fitEnabled: true, fitAnchor: a, fitScale: m, fitOffsetX: 0, fitOffsetY: 0 }, base); const w = 512 * r.baseScale, h = w * 2; const y = 256 - w / 2 + r.baseOffsetY; return { top: y, bottom: y + h, mid: y + h / 2 }; };
@@ -312,6 +340,90 @@ async function main() {
     } catch (e) { check('ZIP opens in .NET ZipFile', false, String(e.message).slice(0, 120)); }
     fs.rmSync(zf, { force: true });
   }
+
+  // -- Clean frame maths (port of the ComfyUI Token Cleaner): hand-computed cases, a naive reference, and the cleaner pipeline
+  const cf = await app.ev(`(async () => {
+    const m = await import('./lib/cleanframe.js');
+    const out = {};
+    const arr = (x) => Array.from(x);
+    // box mean, clipped windows
+    out.box1 = arr(m.boxMean(Float32Array.from([1, 2, 3, 4, 5]), 5, 1, 1));
+    out.box2 = arr(m.boxMean(Float32Array.from([1, 2, 3, 4, 5]), 5, 1, 2));
+    { // 2-D box against a naive double loop, odd sizes, radius larger than the image
+      const w = 17, h = 13, src = new Float32Array(w * h).map((_, i) => ((i * 7919) % 97) / 97);
+      let worst = 0;
+      for (const r of [1, 2, 5, 40]) {
+        const b = m.boxMean(src, w, h, r);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+          let s = 0, n = 0;
+          for (let yy = Math.max(0, y - r); yy <= Math.min(h - 1, y + r); yy++) for (let xx = Math.max(0, x - r); xx <= Math.min(w - 1, x + r); xx++) { s += src[yy * w + xx]; n++; }
+          worst = Math.max(worst, Math.abs(b[y * w + x] - s / n));
+        }
+      }
+      out.boxNaive = worst;
+    }
+    // shape: solidify sequence, strict floor and ceiling (compare against the float32 values the plane stores)
+    out.solid = [1, 2, 3].map((s) => m.shapeAlpha(Float32Array.from([0.5]), { floor: 0, solidify: s, ceiling: 1 })[0]);
+    { const q = Float32Array.from([0.01, 0.0099, 0.98, 0.9801]); const r = m.shapeAlpha(q, { floor: 0.01, solidify: 0, ceiling: 0.98 });
+      out.strict = { keepFloor: r[0] === q[0], dropBelow: r[1] === 0, keepCeil: r[2] === q[2], snapAbove: r[3] === 1 }; }
+    // crop box: 6x6, alpha above the threshold at x 2..3, y 1..4
+    { const w = 6, h = 6, a = new Float32Array(36); for (let y = 1; y <= 4; y++) for (let x = 2; x <= 3; x++) a[y * w + x] = 1;
+      out.crop = m.cropBox(a, w, h, 0.05, 1); out.cropNone = m.cropBox(new Float32Array(36), w, h, 0.05, 0).found; }
+    // Lanczos: grey 10,21 -> 16; red opaque + transparent blue -> no blue bleed; constant (200,200,200,128) -> (199,199,199,128)
+    out.lz1 = Array.from(m.resizeLanczos(Uint8ClampedArray.from([10, 10, 10, 255, 21, 21, 21, 255]), 2, 1, 1, 1).subarray(0, 4));
+    out.lz2 = Array.from(m.resizeLanczos(Uint8ClampedArray.from([255, 0, 0, 255, 0, 0, 255, 0]), 2, 1, 1, 1));
+    out.lz3 = Array.from(m.resizeLanczos(new Uint8ClampedArray(16 * 4).map((_, i) => [200, 200, 200, 128][i % 4]), 4, 4, 2, 2).subarray(0, 4));
+    out.fit = m.fitRect(300, 600, 1000);
+    // guided filter: banded == whole-image, and the maths against a naive per-pixel reference; constant alpha stays constant
+    { const w = 30, h = 23, rgba = new Uint8ClampedArray(w * h * 4);
+      for (let i = 0; i < w * h; i++) { const x = i % w, y = (i / w) | 0; const inside = (x - 15) ** 2 + (y - 11) ** 2 < 70; rgba[i*4] = 40 + (i * 13) % 200; rgba[i*4+1] = 90; rgba[i*4+2] = (i * 29) % 255; rgba[i*4+3] = inside ? 255 : ((x + y) % 5 === 0 ? 90 : 0); }
+      const full = m.refineAlpha(rgba, w, h, { radius: 3, smoothing: 0.001, band: 1000 });
+      const banded = m.refineAlpha(rgba, w, h, { radius: 3, smoothing: 0.001, band: 5 });
+      let bd = 0; for (let i = 0; i < full.length; i++) bd = Math.max(bd, Math.abs(full[i] - banded[i]));
+      out.band = bd;
+      const a0 = new Float64Array(w * h).map((_, i) => rgba[i*4+3] / 255);
+      let num = 0, den = 0; for (let i = 0; i < w * h; i++) { num += a0[i] * (rgba[i*4] + rgba[i*4+1] + rgba[i*4+2]) / 765; den += a0[i]; }
+      const fill = num / Math.max(den, 1e-5) < 0.5 ? 1 : 0;
+      const I = [0, 1, 2].map((c) => new Float64Array(w * h).map((_, i) => a0[i] * rgba[i*4+c] / 255 + (1 - a0[i]) * fill));
+      const r = 3, eps = 0.001;
+      const win = (f) => { const o = new Float64Array(w * h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let s = 0, n = 0; for (let yy = Math.max(0, y - r); yy <= Math.min(h - 1, y + r); yy++) for (let xx = Math.max(0, x - r); xx <= Math.min(w - 1, x + r); xx++) { s += f(yy * w + xx); n++; } o[y * w + x] = s / n; } return o; };
+      const mI = I.map((p) => win((i) => p[i])), mp = win((i) => a0[i]);
+      const aC = [new Float64Array(w * h), new Float64Array(w * h), new Float64Array(w * h)], bC = new Float64Array(w * h);
+      const det3 = (M) => M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+      const cov = []; for (let c = 0; c < 3; c++) { cov[c] = []; for (let d = 0; d < 3; d++) cov[c][d] = win((i) => I[c][i] * I[d][i]); }
+      const cIp = [0, 1, 2].map((c) => win((i) => I[c][i] * a0[i]));
+      for (let i = 0; i < w * h; i++) {
+        const S = [0, 1, 2].map((c) => [0, 1, 2].map((d) => cov[c][d][i] - mI[c][i] * mI[d][i] + (c === d ? eps : 0)));
+        const rhs = [0, 1, 2].map((c) => cIp[c][i] - mI[c][i] * mp[i]);
+        const D = det3(S);
+        for (let c = 0; c < 3; c++) { const M = S.map((row, ri) => row.map((v, ci) => (ci === c ? rhs[ri] : v))); aC[c][i] = det3(M) / D; }
+        bC[i] = mp[i] - aC[0][i] * mI[0][i] - aC[1][i] * mI[1][i] - aC[2][i] * mI[2][i];
+      }
+      const mA = aC.map((p) => win((i) => p[i])), mB = win((i) => bC[i]);
+      let nd = 0; for (let i = 0; i < w * h; i++) { const q = Math.min(1, Math.max(0, mA[0][i] * I[0][i] + mA[1][i] * I[1][i] + mA[2][i] * I[2][i] + mB[i])); nd = Math.max(nd, Math.abs(q - full[i])); }
+      out.naive = nd;
+      const solid = new Uint8ClampedArray(w * h * 4).fill(255); out.constQ = Math.min(...m.refineAlpha(solid, w, h, { radius: 3 }));
+    }
+    // the whole pipeline on a synthetic soft-edged ring frame inside a larger transparent canvas
+    { const W = 200, H = 160, rgba = new Uint8ClampedArray(W * H * 4);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const d = Math.hypot(x - 100, y - 80), a = d > 40 && d < 60 ? 255 : d > 36 && d <= 40 ? 255 * (d - 36) / 4 : 0; const i = (y * W + x) * 4; rgba[i] = 200; rgba[i+1] = 150; rgba[i+2] = 40; rgba[i+3] = a; }
+      const c = m.createCleaner(); c.setImage(rgba, W, H);
+      const pv = c.preview({}); const ex = c.exportImage({ size: 128 }); const st = c.exportImage({ size: 64, resize: 'stretch' });
+      const mid = (ex.h / 2 | 0) * ex.w * 4 + (ex.w / 2 | 0) * 4 + 3;
+      out.pipe = { hasAlpha: c.hasAlpha, pw: pv.w, ph: pv.h, ew: ex.w, eh: ex.h, sw: st.w, centreAlpha: ex.rgba[mid] };
+      const flat = m.createCleaner(); flat.setImage(new Uint8ClampedArray(40 * 30 * 4).fill(255), 40, 30);
+      const fp = flat.preview({});
+      out.opaque = { has: flat.hasAlpha, w: fp.w, h: fp.h };
+    }
+    return out;
+  })()`);
+  check('clean frame: box mean hand cases, and the 2-D box matches a naive loop', J(cf.box1) === J([1.5, 2, 3, 4, 4.5]) && J(cf.box2) === J([2, 2.5, 3, 3.5, 4]) && cf.boxNaive < 1e-6, J({ b1: cf.box1, b2: cf.box2, n: cf.boxNaive }));
+  check('clean frame: solidify 0.5 -> 0.75 / 0.9375 / 0.99609375; floor and ceiling are strict', J(cf.solid) === J([0.75, 0.9375, 0.99609375]) && cf.strict.keepFloor && cf.strict.dropBelow && cf.strict.keepCeil && cf.strict.snapAbove, J({ s: cf.solid, t: cf.strict }));
+  check('clean frame: crop box with padding is clamped; nothing above the threshold returns the whole image', cf.crop.x0 === 1 && cf.crop.x1 === 5 && cf.crop.y0 === 0 && cf.crop.y1 === 6 && cf.cropNone === false, J(cf.crop));
+  check('clean frame: Lanczos matches the Pillow cases (grey 16, no blue bleed, constant colour 199)', cf.lz1[0] === 16 && J(cf.lz2) === J([255, 0, 0, 128]) && J(cf.lz3) === J([199, 199, 199, 128]), J({ a: cf.lz1, b: cf.lz2, c: cf.lz3 }));
+  check('clean frame: fit rect keeps aspect and centres', J(cf.fit) === J({ w: 500, h: 1000, x: 250, y: 0 }), J(cf.fit));
+  check('clean frame: guided filter matches a naive double-precision reference, bands are exact, constant alpha stays 1', cf.naive < 2e-4 && cf.band < 1e-6 && cf.constQ > 0.9999, J({ naive: cf.naive, band: cf.band, constQ: cf.constQ }));
+  check('clean frame: pipeline crops to the ring, exports a square with a transparent hole; opaque images are left uncropped', cf.pipe.hasAlpha && cf.pipe.pw < 200 && cf.pipe.ph < 160 && cf.pipe.ew === 128 && cf.pipe.eh === 128 && cf.pipe.sw === 64 && cf.pipe.centreAlpha === 0 && !cf.opaque.has && cf.opaque.w === 40 && cf.opaque.h === 30, J({ p: cf.pipe, o: cf.opaque }));
 
   // -- RMBG matte post-processing (same maths as the ComfyUI RMBG node), on synthetic mattes
   const mt = await app.ev(`(async () => {
