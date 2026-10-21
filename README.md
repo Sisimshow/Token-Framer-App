@@ -40,7 +40,7 @@ Personal-use project, largely AI-written.
   Based on the author's ComfyUI "Token Background Solver V2" workflow, without its optional image-cleanup model step.
 - **Tools > Clean image…** removes compression noise and artifacts from an *opaque* image with a converted restoration model (1x_PureVision), with a zoomable before/after view.
   The model works on RGB only, so it cannot clean an image that already has transparency. Saved as a PNG; **Save and open as image** also opens it in Token Framer.
-- **Converted image models** (for the optional PureVision pre-clean) live in `app/models/*.onnx` and are not tracked by git. Recreate one with ComfyUI's Python (ComfyUI need not be running): 
+- **Converted image models** (used by Clean image) live in `app/models/*.onnx` and are not tracked by git. Recreate one with ComfyUI's Python (ComfyUI need not be running): 
   `E:\SwarmUI\dlbackend\comfy\python_embeded\python.exe app	ools\convert-model.py "<path>x_PureVision.pth" app\modelsx_PureVision.onnx`.
 - Settings persist in the Electron user-data folder. F12 opens DevTools.
 

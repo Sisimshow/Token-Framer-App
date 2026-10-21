@@ -249,7 +249,7 @@ async function main() {
   if (!fs.existsSync(path.join(root, 'models', '1x_PureVision.onnx'))) {
     console.log('SKIP  Clean image: models/1x_PureVision.onnx not found (convert it with tools/convert-model.py to run these checks)');
   } else {
-    const noisyP = path.join(work, 'Noisy.png'), seeThroughP = path.join(work, 'See through.png'), cleanP = path.join(work, 'Noisy (clean).png');
+    const noisyP = path.join(work, 'Noisy.png'), seeThroughP = path.join(work, 'See through.png'), smallP = path.join(work, 'Small.png'), cleanP = path.join(work, 'Noisy (clean).png');
     fs.rmSync(cleanP, { force: true });
     const r = await app.ev(`(async () => {
       const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms));
@@ -277,6 +277,29 @@ async function main() {
     const magic = fs.existsSync(cleanP) ? fs.readFileSync(cleanP).subarray(0, 4).toString('hex') : '';
     const after = await app.ev(`({ items: __tf.items.length, path: __tf.items[0]?.path, closed: document.querySelector('#imgclean').hidden })`);
     check('Clean image: Save and open as image writes a PNG and opens it in the main window', magic === '89504e47' && saved.w === 330 && after.items === 1 && after.path === cleanP && after.closed, J({ magic, saved: saved.w, after }));
+    // a second image chosen while the first is still being cleaned must never receive the first one's result (different size, then transparent)
+    const race = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+      const mk = (W, H, transparent) => { const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); const d = x.createImageData(W, H); let s = 5;
+        for (let i = 0; i < W * H; i++) { s = (s * 1664525 + 1013904223) >>> 0; d.data[i * 4] = 100 + (s % 60); d.data[i * 4 + 1] = 90; d.data[i * 4 + 2] = 80; d.data[i * 4 + 3] = transparent && i % 7 === 0 ? 0 : 255; }
+        x.putImageData(d, 0, 0); return c; };
+      const save = async (c, p) => window.api.writeFile(p, new Uint8Array(await (await new Promise((res) => c.toBlob(res, 'image/png'))).arrayBuffer()));
+      await save(mk(330, 222, false), ${J(noisyP)}); await save(mk(200, 120, false), ${J(smallP)}); await save(mk(64, 64, true), ${J(seeThroughP)});
+      const o = {};
+      await __tf.imgclean.open(); await wait(200);
+      __tf.imgclean.loadPath(${J(noisyP)});                       // not awaited: still cleaning when the next image arrives
+      await __tf.imgclean.loadPath(${J(smallP)});
+      for (let i = 0; i < 100 && !__tf.imgclean.cleaned; i++) await wait(100);
+      await wait(1200);                                            // let any stale job finish and be (wrongly) shown
+      o.size = { w: __tf.imgclean.cleaned?.width, h: __tf.imgclean.cleaned?.height, infoW: __tf.imgclean.info?.w, saveOn: !q('#icSave').disabled };
+      __tf.imgclean.loadPath(${J(smallP)});
+      await __tf.imgclean.loadPath(${J(seeThroughP)});
+      await wait(2000);
+      o.transparent = { cleaned: !!__tf.imgclean.cleaned, saveOff: q('#icSave').disabled, opaque: __tf.imgclean.opaque };
+      __tf.imgclean.close();
+      return o;
+    })()`);
+    check('Clean image: a result never lands on a different image chosen while it was cleaning', race.size.w === 200 && race.size.h === 120 && race.size.infoW === 200 && race.size.saveOn && race.transparent.cleaned === false && race.transparent.saveOff && race.transparent.opaque === false, J(race));
     await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art back for the checks that follow
   }
 

@@ -11,7 +11,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   const S = canvas.width;
   let models = [], model = '';
   let src = null;                       // { path, name, w, h, rgba, canvas, opaque }
-  let cleanedCanvas = null, info = null, showOriginal = false, busy = false, token = 0;
+  let cleanedCanvas = null, info = null, showOriginal = false, busy = false, dirty = false;
   const view = { z: 1, x: 0, y: 0 };    // zoom and pan of the preview (canvas pixels)
 
   const setMsg = (text, warn = false) => { const m = $('#icMsg'); m.textContent = text; m.style.color = warn ? 'var(--warn)' : ''; };
@@ -63,7 +63,9 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   }
 
   // ---------------------------------------------------------------- loading and cleaning
+  let loadReq = 0;
   async function loadPath(p) {
+    const req = ++loadReq; // the most recently requested image wins, whichever finishes decoding last
     try {
       setMsg('Loading…');
       const bytes = await api.readFile(p);
@@ -73,6 +75,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
       x.drawImage(bmp, 0, 0);
       const d = x.getImageData(0, 0, c.width, c.height);
       bmp.close();
+      if (req !== loadReq) return;
       let opaque = true;
       for (let i = 3; i < d.data.length; i += 4) if (d.data[i] !== 255) { opaque = false; break; }
       src = { path: p, name: baseOf(p), w: c.width, h: c.height, rgba: d.data, canvas: c, opaque };
@@ -92,23 +95,32 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
     if (picked?.length) await loadPath(picked[0]);
   }
 
+  /** Cleans the current image with the current model. If another image or model is chosen while a job runs, that job's result is thrown away and the newest request runs next. */
   async function run() {
-    if (!src || !src.opaque || !model || busy) return;
+    if (busy) { dirty = true; return; }
     busy = true;
-    const mine = ++token;
-    enableSave(false);
     try {
-      setMsg('Cleaning…');
-      const rgba = new Uint8Array(src.rgba.buffer.slice(src.rgba.byteOffset, src.rgba.byteOffset + src.rgba.byteLength)); // a copy, the original stays for the before view
-      const r = await api.cleanImage(model, rgba, src.w, src.h);
-      if (mine !== token) return;
-      cleanedCanvas = toCanvas(new Uint8ClampedArray(r.rgba.buffer, r.rgba.byteOffset, r.rgba.byteLength), src.w, src.h);
-      info = { ms: r.ms, provider: r.provider, w: src.w, h: src.h };
-      setMsg(`Cleaned ${src.w}×${src.h} with ${model} in ${(r.ms / 1000).toFixed(2)} s on ${r.provider}. Scroll to zoom, drag to pan, double-click to reset.`);
-      enableSave(true);
-      redraw();
-    } catch (err) {
-      setMsg(`Could not clean the image: ${err.message}`, true);
+      do {
+        dirty = false;
+        const job = src, name = model;
+        if (!job || !job.opaque || !name) break;
+        enableSave(false);
+        setMsg('Cleaning…');
+        let r;
+        try {
+          const rgba = new Uint8Array(job.rgba.buffer.slice(job.rgba.byteOffset, job.rgba.byteOffset + job.rgba.byteLength)); // a copy, the original stays for the before view
+          r = await api.cleanImage(name, rgba, job.w, job.h);
+        } catch (err) {
+          if (job === src && name === model) setMsg(`Could not clean the image: ${err.message}`, true);
+          continue;
+        }
+        if (job !== src || name !== model) { dirty = true; continue; } // superseded while it ran: never show it
+        cleanedCanvas = toCanvas(new Uint8ClampedArray(r.rgba.buffer, r.rgba.byteOffset, r.rgba.byteLength), job.w, job.h);
+        info = { ms: r.ms, provider: r.provider, w: job.w, h: job.h };
+        setMsg(`Cleaned ${job.w}×${job.h} with ${name} in ${(r.ms / 1000).toFixed(2)} s on ${r.provider}. Scroll to zoom, drag to pan, double-click to reset.`);
+        enableSave(true);
+        redraw();
+      } while (dirty);
     } finally {
       busy = false;
     }
@@ -159,7 +171,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
   $('#icClose').onclick = close;
   $('#icSave').onclick = () => saveClicked(false);
   $('#icSaveOpen').onclick = () => saveClicked(true);
-  $('#icModel').onchange = (e) => { model = e.target.value; cleanedCanvas = null; run(); };
+  $('#icModel').onchange = (e) => { model = e.target.value; cleanedCanvas = null; enableSave(false); run(); };
   $('#icOriginal').onchange = (e) => { showOriginal = e.target.checked; redraw(); };
   root.addEventListener('dragover', (e) => e.preventDefault());
   root.addEventListener('drop', async (e) => { // not stopped, so the window-level handler still clears the drag highlight
