@@ -78,7 +78,7 @@ const offs = (p, label, show, r = 256) => [
 const SECTIONS = [
   { title: 'Image', open: true, controls: [
     { k: 'fitEnabled', t: 'autocenter', label: '' },
-    { k: 'fitAnchor', t: 'select', label: 'Vertical anchor', show: fit, opts: [['top', 'Top (keeps faces)'], ['center', 'Center']] },
+    { k: 'fitAnchor', t: 'select', label: 'Vertical anchor', show: fit, opts: [['top', 'Top (keeps faces)'], ['center', 'Center'], ['bottom', 'Bottom']] },
     num('fitScale', 'Scale ×', 0.5, 2, 0.01, fit),
     ...offs('fitOffset', 'Nudge', fit, 200),
     num('baseScale', 'Scale', 0.2, 2.5, 0.01, (c) => !fit(c)),

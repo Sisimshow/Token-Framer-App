@@ -77,7 +77,7 @@ export function holeTarget512(hole, cfg) {
 
 /**
  * Resolve baseScale/baseOffset. With "fit to hole" on and a valid hole, the art is cover-fitted to the hole's
- * bounding box (anchored top or centre vertically, centred horizontally) plus the user's scale/offset nudge.
+ * bounding box (anchored top, centre or bottom vertically, centred horizontally) plus the user's scale/offset nudge.
  */
 export function resolvePlacement(cfg, base, hole) {
   if (!cfg.fitEnabled || !hole?.valid) {
@@ -88,16 +88,16 @@ export function resolvePlacement(cfg, base, hole) {
   const aw = base.width, ah = base.height;
   const scale = Math.max(t.w / aw, t.h / ah);
   let dw = aw * scale, dh = ah * scale;
-  const top = cfg.fitAnchor !== 'center';
+  const f = cfg.fitAnchor === 'center' ? 0.5 : cfg.fitAnchor === 'bottom' ? 1 : 0; // which fraction of the art height sits on the anchor line
   let dx = t.x + t.w / 2 - dw / 2;
-  let dy = top ? t.y : t.y + t.h / 2 - dh / 2;
+  let dy = t.y + t.h * f - dh * f;
 
   const m = cfg.fitScale;
   const ax = dx + dw / 2;
-  const ay = top ? dy : dy + dh / 2;
+  const ay = dy + dh * f; // the anchor point stays put while "Scale ×" grows or shrinks the art around it
   dw *= m; dh *= m;
   dx = ax - dw / 2;
-  dy = top ? ay : ay - dh / 2;
+  dy = ay - dh * f;
   dx += cfg.fitOffsetX;
   dy += cfg.fitOffsetY;
 

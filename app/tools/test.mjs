@@ -174,6 +174,14 @@ async function main() {
     let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return { w: bm.width, mean: s / a.length }; })()`);
   check('export matches preview compositing (webp q95)', exp.w === SIZE && exp.mean < 2, `mean ${exp.mean.toFixed(3)}/255`);
 
+  // -- Auto center anchors: top keeps the art's top edge fixed while Scale x changes, bottom keeps the bottom edge, centre the middle
+  const anc = await app.ev(`(() => { const T = window.__tf; const base = { width: 300, height: 600 }; const cfg = T.eff();
+    const edge = (a, m) => { const r = T.resolveCfg({ ...cfg, fitEnabled: true, fitAnchor: a, fitScale: m, fitOffsetX: 0, fitOffsetY: 0 }, base); const w = 512 * r.baseScale, h = w * 2; const y = 256 - w / 2 + r.baseOffsetY; return { top: y, bottom: y + h, mid: y + h / 2 }; };
+    return { t1: edge('top', 1), t2: edge('top', 1.5), b1: edge('bottom', 1), b2: edge('bottom', 1.5), c1: edge('center', 1), c2: edge('center', 1.5) }; })()`);
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  check('anchor Top/Center/Bottom: the chosen edge stays fixed when Scale x changes, bottom anchor sits higher than top anchor, centre halfway',
+    near(anc.t1.top, anc.t2.top) && near(anc.b1.bottom, anc.b2.bottom) && near(anc.c1.mid, anc.c2.mid) && anc.b1.bottom < anc.t1.bottom && near(anc.c1.mid, (anc.t1.mid + anc.b1.mid) / 2), J(anc));
+
   // -- PNG output: the Format select re-points the item, the saved file is a real PNG, switching back restores webp
   const fmtSet = (v) => app.ev(`(async () => { const sel = [...document.querySelectorAll('#panel select')].find((x) => [...x.options].some((o) => o.value === 'png')); sel.value = ${J(v)}; sel.dispatchEvent(new Event('change')); await new Promise((r) => setTimeout(r, 300)); return { out: __tf.items[__tf.cur].outPath, exists: __tf.items[__tf.cur].exists }; })()`);
   const dq = await app.ev('({ format: __tf.out.format, quality: __tf.out.quality, status: getComputedStyle(document.querySelector("#status"), "::before").content })');
