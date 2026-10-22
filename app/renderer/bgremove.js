@@ -228,6 +228,10 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     if (!(nat > 8)) return;                                               // hidden
     const n = Math.max(64, Math.floor((nat - 2 * bw) * dpr));
     canvas.style.width = canvas.style.height = `${n / dpr + 2 * bw}px`;
+    // and on whole device pixels: centred in its column it can sit at a fraction of a pixel, which the browser rounds away when it draws it
+    canvas.style.position = 'relative'; canvas.style.left = canvas.style.top = '0px';
+    const rb = canvas.getBoundingClientRect(), cl = rb.left + bw, ct = rb.top + canvas.clientTop;
+    canvas.style.left = `${Math.round(cl * dpr) / dpr - cl}px`; canvas.style.top = `${Math.round(ct * dpr) / dpr - ct}px`;
     if (n === S && canvas.width === n) return;
     const o = origin(), img = shownImage();
     const cx = (S / 2 - o.ox) / o.a, cy = (S / 2 - o.oy) / o.a;           // the image point at the middle, to keep it there
@@ -283,7 +287,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
       if (insideImage(p)) pushEdit({ type: 'wand', x: Math.round(p.x), y: Math.round(p.y), tol: params.wandTolerance, contiguous: !!params.wandContiguous });
     } else if (tool === 'brush') {
       const pen = penSize(params.brushSize);
-      stroke = { r: Math.max(0.5, params.brushSize / 2), pen, mode: params.brushMode, pts: [pen ? penAnchor(p.x, p.y, pen) : [p.x, p.y]], touched: null };
+      stroke = { r: Math.max(0.5, params.brushSize / 2), pen, mode: params.brushMode, pts: [pen ? penAnchor(p.x, p.y, pen) : [p.x, p.y]], touched: null, downX: e.clientX, downY: e.clientY, moved: false };
       liveBrush(stroke.pts);
     } else if (tool === 'rect') {
       rect = { x0: p.x, y0: p.y, vx: e.clientX, vy: e.clientY };
@@ -302,9 +306,9 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
       const d = Math.max(3, params.brushSize * perPx);                // brush size is in source pixels
       ring.classList.toggle('pen', !!pen);
       if (pen) { // the pen paints whole pixels: show the exact block that the next click will hit, snapped to the pixel grid
-        const q = srcPoint(e), a = penAnchor(q.x, q.y, pen), c = clientOf(a[0] + pen / 2, a[1] + pen / 2);
-        ring.style.width = ring.style.height = `${Math.max(3, pen * perPx)}px`;
-        ring.style.left = `${c.x - sr.left}px`; ring.style.top = `${c.y - sr.top}px`;
+        const q = srcPoint(e), a = penAnchor(q.x, q.y, pen), lt = clientOf(a[0], a[1]), rb = clientOf(a[0] + pen, a[1] + pen);   // the block's own corners: the square IS those pixels
+        ring.style.width = `${Math.max(3, rb.x - lt.x)}px`; ring.style.height = `${Math.max(3, rb.y - lt.y)}px`;
+        ring.style.left = `${lt.x - sr.left}px`; ring.style.top = `${lt.y - sr.top}px`;
       } else {
         ring.style.width = ring.style.height = `${d}px`;
         ring.style.left = `${e.clientX - sr.left}px`; ring.style.top = `${e.clientY - sr.top}px`;
@@ -314,6 +318,8 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     if (stroke) {
       const p = srcPoint(e), last = stroke.pts[stroke.pts.length - 1];
       if (stroke.pen) {
+        if (!stroke.moved && Math.hypot(e.clientX - stroke.downX, e.clientY - stroke.downY) < 4) return; // a click is one pixel even if the hand shakes a little while pressing
+        stroke.moved = true;
         const a = penAnchor(p.x, p.y, stroke.pen);
         if (a[0] !== last[0] || a[1] !== last[1]) { stroke.pts.push(a); liveBrush([last, a]); }
       } else if (Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, stroke.r / 4)) { stroke.pts.push([p.x, p.y]); liveBrush([last, [p.x, p.y]]); }

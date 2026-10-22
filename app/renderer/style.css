@@ -70,14 +70,14 @@ body.dragging .toolscreen:not([hidden]) .tsDrop { display: flex; }
 #view.tool { cursor: crosshair; }
 #view.tool.panmode { cursor: grab; }
 #brushRing { position: absolute; border: 1.5px solid #fff; box-shadow: 0 0 0 1px #000; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
-#brushRing.pen, .brRing.pen { border-radius: 0; }
+#brushRing.pen, .brRing.pen { border-radius: 0; border-width: 1px; box-shadow: inset 0 0 0 1px #000; transform: none; } /* the pen's square: its outer edge IS the pixel block (border-box, shadow inside), placed by its top-left corner */
 #rubber { position: absolute; border: 1px dashed #fff; background: rgba(106,162,255,.18); pointer-events: none; }
 button.active { border-color: var(--accent); background: var(--accent-dim); }
 .hint { color: var(--muted); font-size: 12px; }
 .row .ctl.wrap { flex-wrap: wrap; }
 .row .ctl.toolgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .toolgrid .hint { grid-column: 1 / -1; }
-#preview { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; image-rendering: auto; }
+#preview { position: absolute; left: 0; top: 0; width: 100%; height: 100%; } /* sized to whole device pixels and drawn zoomed by blitPreview() */
 #zoomBadge { position: absolute; right: 6px; top: 6px; background: rgba(0,0,0,.6); border-radius: 3px; padding: 1px 6px; font-size: 12px; }
 #dropHint { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 22px; background: rgba(106,162,255,.18); border: 2px dashed var(--accent); pointer-events: none; }
 body.dragging #dropHint { display: flex; }

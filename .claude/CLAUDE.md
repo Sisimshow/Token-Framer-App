@@ -72,7 +72,11 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   in source-image pixels, applied in order on top of the automatic color mask; hand edits (brush, rectangle) are exempt from
   grow/feather/defringe so single-pixel edits stay exact. A brush of 1 to 3 px is a pixel pen (`penSize`/`penAnchor`/`stampPixelStroke` in `colorremoval.js`; edit `{type:'brush', px: 1|2|3, pts: integer anchor pixels}`; size 3 is centred on the pixel under the pointer, 2 on the nearest corner):
   whole pixels under the pointer joined by a Bresenham line, the ring becomes a pixel square. Older disc-based brush edits (no `px`) are replayed as before (they rounded the pointer to the nearest pixel centre, half a pixel off).
-- The main window's preview is 800 px (1600 in pixel view), rendered up to 4096 px while zoomed in (`previewSize()`), so zoomed source pixels are real detail; a 4096 px composite takes about 50 ms.
+- The main window's preview: the composite is rendered into an off-screen buffer (`state.prevBuf`, 800 px, 1600 in pixel view, up to 4096 while zoomed: `previewSize()`; a 4096 px
+  composite takes about 50 ms) and `blitPreview()` draws the visible part into `#preview`, which is sized to whole device pixels. Zoom (max 20x) and pan are applied there, NOT as a CSS
+  transform: Chromium drew a CSS-zoomed canvas up to ~4 px away from its own getBoundingClientRect at 20x, so the pixel seen under the pointer was not the one erased. All pointer maths
+  goes through `compRect()` (where the whole composite is on screen). With the pen in hand and the art magnified (`penCrisp()`) the art is drawn nearest neighbour and the pen maps the
+  pointer through exactly that drawing (`penAnchorAt`, `penBlockRect`). A pen click ignores the first 4 CSS px of movement (`PEN_DEAD_ZONE`), so a shaky click stays one pixel.
 - The cutout only affects the pop-out layer unless `crPopOutOnly` is off. Preview and export share `buildSources` / `compositeFor`,
   so they cannot drift.
 - "Edit this image only" (`state.editOnly`) follows the selected image: on when it has any `override`, off otherwise. With 2+ images, changing a

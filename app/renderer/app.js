@@ -503,16 +503,22 @@ function schedulePreview(delay = 30) {
   renderTimer = setTimeout(renderPreview, delay);
 }
 
+/** The composite is rendered into this off-screen buffer (previewSize() px square); blitPreview() puts the visible part of it on screen. */
+const previewBuffer = () => state.prevBuf || (state.prevBuf = document.createElement('canvas'));
+
 async function renderPreview() {
   const tok = ++renderTok;
-  const cv = $('#preview');
+  const cv = previewBuffer();
   const ctx = cv.getContext('2d');
   if (!state.frame || !state.base) {
+    if (cv.width !== PREVIEW) { cv.width = PREVIEW; cv.height = PREVIEW; }
+    state.crispShown = false;
     ctx.clearRect(0, 0, PREVIEW, PREVIEW);
     ctx.fillStyle = '#9097a5';
     ctx.font = '22px Segoe UI, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(state.frame ? 'Open an image or folder' : state.base ? 'Choose a frame' : 'Choose a frame, then open images', PREVIEW / 2, PREVIEW / 2);
+    blitPreview();
     return;
   }
   const cfg = eff();
@@ -520,7 +526,9 @@ async function renderPreview() {
   if (tok !== renderTok) return;
   const cut = hasCutout(cfg) || state.stroke ? previewCut(cfg) : null;
   // pixel view renders at 2x so each source pixel is a visible block when zoomed, drawn without smoothing
-  const crisp = !!state.ui.pixelView;
+  const crisp = !!state.ui.pixelView || penCrisp();
+  state.crispShown = crisp;                       // the pen's pointer mapping and square follow exactly this drawing (see penAnchorAt)
+  $('#view').classList.toggle('pixel', crisp);
   const size = previewSize();
   if (cv.width !== size) { cv.width = size; cv.height = size; }
   ctx.clearRect(0, 0, size, size);
@@ -530,12 +538,43 @@ async function renderPreview() {
     const r = baseRect(resolveCfg(cfg, bitmap), bitmap, size);
     ctx.imageSmoothingEnabled = !crisp;
     ctx.drawImage(cut ? cut.canvas : bitmap, r.x, r.y, r.w, r.h);
+    blitPreview();
     return;
   }
   ctx.drawImage(compositeFor(cfg, buildSources(cfg, state.base.bitmap, cut), size, { highlightPopOut: state.ui.popOutPreview, crisp }), 0, 0);
+  blitPreview();
 }
 
-// zoom / pan (CSS transform on the preview canvas, like the module's dialog)
+/**
+ * Draws the visible part of the preview buffer into the on-screen canvas at the current zoom and pan. The on-screen canvas is exactly as many device pixels as
+ * it is shown at, and the zoom is applied here, not as a CSS transform: the browser drew a CSS-zoomed canvas up to ~4 px away from where its own geometry said
+ * (at 20x), so the pixel seen under the pointer was not the pixel erased. Drawn this way, the picture and the pointer maths (compRect) always agree.
+ */
+function blitPreview() {
+  const cv = $('#preview'), buf = state.prevBuf, view = $('#view');
+  if (!buf) return;
+  const dpr = window.devicePixelRatio || 1;
+  const css = view.getBoundingClientRect().width - 2 * view.clientLeft;     // #view's content box (square)
+  const D = Math.max(1, Math.round(css * dpr));
+  if (cv.width !== D) { cv.width = D; cv.height = D; }
+  cv.style.width = cv.style.height = `${D / dpr}px`;
+  const ctx = cv.getContext('2d'), v = state.view, B = buf.width;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, D, D);
+  ctx.imageSmoothingEnabled = !state.crispShown;
+  ctx.imageSmoothingQuality = 'high';
+  const dx = v.x * dpr, dy = v.y * dpr, dw = v.z * D;                        // where the whole buffer lands, in device pixels
+  const u0 = Math.max(0, Math.floor((-dx / dw) * B)), u1 = Math.min(B, Math.ceil(((D - dx) / dw) * B));
+  const w0 = Math.max(0, Math.floor((-dy / dw) * B)), w1 = Math.min(B, Math.ceil(((D - dy) / dw) * B));
+  if (u1 > u0 && w1 > w0) ctx.drawImage(buf, u0, w0, u1 - u0, w1 - w0, dx + (u0 * dw) / B, dy + (w0 * dw) / B, ((u1 - u0) * dw) / B, ((w1 - w0) * dw) / B);
+}
+/** Where the whole composite is on screen at the current zoom and pan (client coordinates): the frame of reference of every pointer mapping. */
+function compRect() {
+  const r = $('#preview').getBoundingClientRect(), v = state.view;
+  return { left: r.left + v.x, top: r.top + v.y, width: r.width * v.z, height: r.height * v.z };
+}
+
+// zoom / pan (drawn by blitPreview, see there)
 /**
  * The preview's resolution. It is 800 px (1600 in pixel view) until you zoom in; then it is rendered larger (up to 4096) so that zooming shows real detail instead of an
  * enlarged 800 px picture. Without that a source pixel of big art is a fraction of a preview pixel and single-pixel edits cannot be seen (or judged) at all.
@@ -550,11 +589,20 @@ function applyView() {
   const min = -(v.z - 1) * size;
   v.x = Math.min(0, Math.max(min, v.x));
   v.y = Math.min(0, Math.max(min, v.y));
-  $('#preview').style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.z})`;
+  // #view and the pan are kept on whole device pixels, so the preview's device pixels are the screen's (no sub-pixel shift when the browser composites it)
+  const vw = $('#view'), dpr = window.devicePixelRatio || 1;
+  vw.style.left = vw.style.top = '0px';
+  const vb = vw.getBoundingClientRect();
+  const cl = vb.left + vw.clientLeft, ct = vb.top + vw.clientTop;          // the content box, inside the 1 px border
+  vw.style.left = `${Math.round(cl * dpr) / dpr - cl}px`;
+  vw.style.top = `${Math.round(ct * dpr) / dpr - ct}px`;
+  v.x = Math.round(v.x * dpr) / dpr;
+  v.y = Math.round(v.y * dpr) / dpr;
+  blitPreview();
   const b = $('#zoomBadge');
   b.hidden = v.z === 1;
   b.textContent = `${v.z.toFixed(1)}×`;
-  if (state.base && state.frame && $('#preview').width !== previewSize()) schedulePreview(0); // zoomed far enough for a sharper render
+  if (state.base && state.frame && (previewBuffer().width !== previewSize() || penCrisp() !== !!state.crispShown && !state.ui.pixelView)) schedulePreview(0); // zoomed far enough for a sharper render, or for real pixels
 }
 
 function setupView() {
@@ -564,7 +612,7 @@ function setupView() {
     const v = state.view;
     const r = view.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const nz = Math.min(16, Math.max(1, v.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    const nz = Math.min(20, Math.max(1, v.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
     v.x = mx - (mx - v.x) * (nz / v.z);
     v.y = my - (my - v.y) * (nz / v.z);
     v.z = nz;
@@ -621,6 +669,7 @@ function setTool(t) {
   $('#rubber').hidden = true;
   setStatus(state.tool ? TOOL_HINTS[state.tool] : '');
   syncControls();
+  if (state.base && penCrisp() !== !!state.crispShown && !state.ui.pixelView) schedulePreview(0);
 }
 
 /** Pointer event -> source-image pixel coordinates (handles zoom/pan via the canvas' bounding rect). */
@@ -629,18 +678,54 @@ function srcPoint(e) {
   const bm = state.base.bitmap;
   const cfg = eff();
   const br = baseRect(resolveCfg(cfg, bm), bm, PREVIEW);
-  const r = $('#preview').getBoundingClientRect();
+  const r = compRect();
   const px = ((e.clientX - r.left) / r.width) * PREVIEW;
   const py = ((e.clientY - r.top) / r.height) * PREVIEW;
   return { x: ((px - br.x) * bm.width) / br.w, y: ((py - br.y) * bm.height) / br.h, scale: bm.width / br.w, w: bm.width, h: bm.height, cfg };
+}
+/** On-screen (CSS) pixels per source pixel at the current zoom. */
+function screenPerSrcPx() {
+  const bm = state.base.bitmap, br = baseRect(resolveCfg(eff(), bm), bm, PREVIEW);
+  return (br.w / bm.width) * (compRect().width / PREVIEW);
+}
+/**
+ * The pen (a 1-3 px brush) in hand and the art magnified on screen: the art is then drawn with nearest neighbour (as in Pixel view), so each source pixel is one
+ * solid block instead of a smooth blur that makes a single erased pixel look like a soft 2x2 patch.
+ */
+function penCrisp() {
+  return !!(state.base && state.tool === 'brush' && penSize(eff().brushSize) && screenPerSrcPx() >= 1);
+}
+/**
+ * The pen's anchor pixel for a pointer event. While the art is drawn with real pixels (crispShown) the pointer goes through exactly that drawing: screen -> preview
+ * pixel (the canvas is shown pixelated) -> the source pixel nearest neighbour put there. So the pixel you see under the pointer is the pixel you erase, even at the
+ * edges where the exact geometry and the drawn blocks differ by a preview pixel.
+ */
+function penAnchorAt(e, n) {
+  const p = srcPoint(e);
+  if (!p) return null;
+  if (!state.crispShown) return penAnchor(p.x, p.y, n);
+  const r = compRect(), Wb = previewBuffer().width, bm = state.base.bitmap, br = baseRect(resolveCfg(eff(), bm), bm, Wb);
+  const col = Math.floor(((e.clientX - r.left) / r.width) * Wb), row = Math.floor(((e.clientY - r.top) / r.height) * Wb);
+  const px = Math.floor(((col + 0.5 - br.x) * bm.width) / br.w), py = Math.floor(((row + 0.5 - br.y) * bm.height) / br.h);
+  if (n % 2) return [px - (n - 1) / 2, py - (n - 1) / 2];
+  return [p.x - px < 0.5 ? px - 1 : px, p.y - py < 0.5 ? py - 1 : py];   // 2 px: the corner of the shown pixel nearest the pointer
+}
+/** Client rectangle of the pixels a pen block covers, as drawn (the preview pixels nearest neighbour gives them when crispShown). */
+function penBlockRect(a, n) {
+  if (!state.crispShown) { const lt = clientOfSrc(a[0], a[1]), rb = clientOfSrc(a[0] + n, a[1] + n); return { l: lt.x, t: lt.y, w: rb.x - lt.x, h: rb.y - lt.y }; }
+  const r = compRect(), Wb = previewBuffer().width, bm = state.base.bitmap, br = baseRect(resolveCfg(eff(), bm), bm, Wb);
+  const col = (i) => r.left + (Math.ceil(br.x + (i * br.w) / bm.width - 0.5) / Wb) * r.width;   // first preview column showing source column i
+  const row = (j) => r.top + (Math.ceil(br.y + (j * br.h) / bm.height - 0.5) / Wb) * r.height;
+  return { l: col(a[0]), t: row(a[1]), w: col(a[0] + n) - col(a[0]), h: row(a[1] + n) - row(a[1]) };
 }
 /** Source-image coordinates -> client coordinates: the inverse of srcPoint. */
 function clientOfSrc(x, y) {
   const bm = state.base.bitmap;
   const br = baseRect(resolveCfg(eff(), bm), bm, PREVIEW);
-  const r = $('#preview').getBoundingClientRect();
+  const r = compRect();
   return { x: r.left + ((br.x + (x * br.w) / bm.width) / PREVIEW) * r.width, y: r.top + ((br.y + (y * br.h) / bm.height) / PREVIEW) * r.height };
 }
+const PEN_DEAD_ZONE = 4; // CSS px the pointer must travel after the press before a pen stroke leaves its first pixel
 const insideImage = (p) => p.x >= 0 && p.y >= 0 && p.x < p.w && p.y < p.h;
 
 function afterEdit() {
@@ -736,7 +821,7 @@ function toolDown(e) {
     if (insideImage(p)) pushEdit({ type: 'wand', x: Math.round(p.x), y: Math.round(p.y), tol: p.cfg.wandTolerance, contiguous: !!p.cfg.wandContiguous });
   } else if (state.tool === 'brush') {
     const pen = penSize(p.cfg.brushSize);
-    state.stroke = { r: Math.max(0.5, p.cfg.brushSize / 2), pen, mode: p.cfg.brushMode, pts: [pen ? penAnchor(p.x, p.y, pen) : [p.x, p.y]], touched: null };
+    state.stroke = { r: Math.max(0.5, p.cfg.brushSize / 2), pen, mode: p.cfg.brushMode, pts: [pen ? penAnchorAt(e, pen) : [p.x, p.y]], touched: null, downX: e.clientX, downY: e.clientY, moved: false };
     previewCut(p.cfg);
     liveBrush(state.stroke.pts);
   } else if (state.tool === 'rect') {
@@ -747,6 +832,7 @@ function toolDown(e) {
 function toolMove(e) {
   const view = $('#view');
   const vr = view.getBoundingClientRect();
+  const ox = vr.left + view.clientLeft, oy = vr.top + view.clientTop; // the ring and the rubber band are placed inside #view's 1 px border
   const ring = $('#brushRing');
   const pp = state.tool === 'brush' ? srcPoint(e) : null;
   if (pp) {
@@ -755,14 +841,14 @@ function toolMove(e) {
     const pen = penSize(eff().brushSize);
     ring.classList.toggle('pen', !!pen);
     if (pen) { // the pen paints whole pixels: show the exact block the next click will hit, snapped to the pixel grid
-      const a = penAnchor(pp.x, pp.y, pen), c = clientOfSrc(a[0] + pen / 2, a[1] + pen / 2);
-      ring.style.width = ring.style.height = `${Math.max(3, pen * perPx)}px`;
-      ring.style.left = `${c.x - vr.left}px`;
-      ring.style.top = `${c.y - vr.top}px`;
+      const b = penBlockRect(penAnchorAt(e, pen), pen);
+      ring.style.width = `${Math.max(3, b.w)}px`; ring.style.height = `${Math.max(3, b.h)}px`;
+      ring.style.left = `${b.l - ox}px`;
+      ring.style.top = `${b.t - oy}px`;
     } else {
       ring.style.width = ring.style.height = `${Math.max(3, eff().brushSize * perPx)}px`;
-      ring.style.left = `${e.clientX - vr.left}px`;
-      ring.style.top = `${e.clientY - vr.top}px`;
+      ring.style.left = `${e.clientX - ox}px`; // centred on the pointer (translate -50% in the CSS)
+      ring.style.top = `${e.clientY - oy}px`;
     }
     ring.hidden = false;
   } else ring.hidden = true;
@@ -771,7 +857,10 @@ function toolMove(e) {
     const s = state.stroke;
     const last = s.pts[s.pts.length - 1];
     if (p && s.pen) {
-      const a = penAnchor(p.x, p.y, s.pen);
+      // a click is one pixel: the hand shakes a little while pressing, so the stroke only moves on once the pointer has really travelled
+      if (!s.moved && Math.hypot(e.clientX - s.downX, e.clientY - s.downY) < PEN_DEAD_ZONE) return;
+      s.moved = true;
+      const a = penAnchorAt(e, s.pen);
       if (a[0] !== last[0] || a[1] !== last[1]) { s.pts.push(a); liveBrush([last, a]); }
     } else if (p && Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, s.r / 4)) {
       s.pts.push([p.x, p.y]);
@@ -780,8 +869,8 @@ function toolMove(e) {
   } else if (state.tdrag) {
     const d = state.tdrag, rb = $('#rubber');
     rb.hidden = false;
-    rb.style.left = `${Math.min(d.vx, e.clientX) - vr.left}px`;
-    rb.style.top = `${Math.min(d.vy, e.clientY) - vr.top}px`;
+    rb.style.left = `${Math.min(d.vx, e.clientX) - ox}px`;
+    rb.style.top = `${Math.min(d.vy, e.clientY) - oy}px`;
     rb.style.width = `${Math.abs(e.clientX - d.vx)}px`;
     rb.style.height = `${Math.abs(e.clientY - d.vy)}px`;
   }
@@ -954,7 +1043,7 @@ function pickSeedAt(e) {
   state.pickSeed = false;
   $('#view').classList.remove('seed');
   if (!state.frame) return;
-  const r = $('#preview').getBoundingClientRect();
+  const r = compRect();
   const cfg = eff();
   const k = PREVIEW / 512;
   const px = ((e.clientX - r.left) / r.width) * PREVIEW;

@@ -617,11 +617,47 @@ async function main() {
     }
     // the main window renders its preview larger when zoomed, so a zoomed-in source pixel is real detail, and goes back to 800 px at 1x
     {
-      const zoomed = await app.ev(`(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const v = document.querySelector('#view'); const o = { start: document.querySelector('#preview').width };
+      const zoomed = await app.ev(`(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const v = document.querySelector('#view'); const o = { start: __tf.prevBuf.width };
         for (let i = 0; i < 10; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, clientX: v.getBoundingClientRect().left + 300, clientY: v.getBoundingClientRect().top + 300, bubbles: true, cancelable: true })); await wait(700);
-        o.zoom = +__tf.view.z.toFixed(2); o.zoomed = document.querySelector('#preview').width;
-        v.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); await wait(700); o.back = document.querySelector('#preview').width; return o; })()`);
+        o.zoom = +__tf.view.z.toFixed(2); o.zoomed = __tf.prevBuf.width;
+        v.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); await wait(700); o.back = __tf.prevBuf.width; return o; })()`);
       check('Main window: the preview is rendered larger while zoomed in (up to 4096 px) and back at 800 px at 1x', zoomed.start === 800 && zoomed.zoom > 2 && zoomed.zoomed > 800 && zoomed.zoomed <= 4096 && zoomed.back === 800, J(zoomed));
+    }
+    // the main window with REAL mouse input: zoom goes to 20x, and at high zoom with a 1 px pen the pixel SHOWN under the pointer is the pixel erased, right up to
+    // its drawn edges (just outside erases the neighbour); a slightly shaky click stays one pixel; the square frames exactly the drawn pixel
+    {
+      const MW = 1200, MY = 450, MX = 600, markP = path.join(work, 'Marker.png');
+      await app.ev(`(async () => { await __tf.openImages([${J(markP)}]); await new Promise((r) => setTimeout(r, 1200)); __tf.ui.showCutout = true; __tf.shared.brushSize = 1; __tf.shared.brushMode = 'erase'; if (__tf.tool !== 'brush') __tf.setTool('brush'); return 1; })()`);   // the art alone, so the frame cannot cover the marker
+      const vr = await app.ev(`__tf.clientOfSrc(${MX} + 0.5, ${MY} + 0.5)`);   // zoom in on the marker itself
+      const mouse = (type, x, y, extra = {}) => app.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
+      const undoAll = () => app.ev(`(() => { while (__tf.items[__tf.cur].override.popEdits?.length) __tf.undo(); return 1; })()`);
+      const last = () => app.ev(`(() => { const e = __tf.items[__tf.cur].override.popEdits?.at(-1); return e ? e.pts : null; })()`);
+      await mouse('mouseMoved', vr.x, vr.y, { buttons: 0 });
+      const rows = [];
+      for (let step = 1; step <= 26; step++) {
+        await app.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: vr.x, y: vr.y, deltaX: 0, deltaY: -100 }); await sleep(250);
+        if (step !== 16 && step !== 26) continue;
+        await undoAll(); await sleep(350);
+        const blk = await app.ev(`(() => {
+          const c = document.querySelector('#preview'), g = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+          for (let i = 0; i < g.length; i += 4) if (g[i] > 240 && g[i + 1] < 20 && g[i + 2] > 240) { const p = i / 4; x0 = Math.min(x0, p % c.width); x1 = Math.max(x1, p % c.width); y0 = Math.min(y0, (p / c.width) | 0); y1 = Math.max(y1, (p / c.width) | 0); }
+          const r = c.getBoundingClientRect(), k = r.width / c.width;
+          return x1 < 0 ? null : { z: __tf.view.z, l: r.left + x0 * k, t: r.top + y0 * k, w: (x1 - x0 + 1) * k, h: (y1 - y0 + 1) * k };
+        })()`);
+        if (!blk) { rows.push({ step, found: false }); continue; }
+        await mouse('mouseMoved', blk.l + blk.w / 2, blk.t + blk.h / 2, { buttons: 0 }); await sleep(40);
+        const ring = await app.ev(`(() => { const r = document.querySelector('#brushRing').getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; })()`);
+        const probes = [[blk.l + 0.6, blk.t + 0.6, [MX, MY]], [blk.l + blk.w - 0.6, blk.t + blk.h - 0.6, [MX, MY]], [blk.l - 0.6, blk.t + blk.h / 2, [MX - 1, MY]], [blk.l + blk.w + 0.6, blk.t + blk.h / 2, [MX + 1, MY]], [blk.l + blk.w / 2, blk.t - 0.6, [MX, MY - 1]]];
+        const got = [];
+        for (const [x, y] of probes) { await mouse('mouseMoved', x, y, { buttons: 0 }); await mouse('mousePressed', x, y); await mouse('mouseReleased', x, y); await sleep(50); got.push(await last()); await undoAll(); }
+        const mx = blk.l + blk.w / 2, my = blk.t + blk.h / 2;
+        await mouse('mouseMoved', mx, my, { buttons: 0 }); await mouse('mousePressed', mx, my); await mouse('mouseMoved', mx + 2, my + 1.5); await mouse('mouseMoved', mx - 1.5, my + 2); await mouse('mouseReleased', mx - 1.5, my + 2); await sleep(60);
+        const shaky = await last(); await undoAll();
+        rows.push({ step, z: +blk.z.toFixed(2), probes: probes.every(([, , want], i) => got[i] && got[i].length === 1 && got[i][0][0] === want[0] && got[i][0][1] === want[1]), got, shaky, ring: Math.abs(ring.l - blk.l) < 1.01 && Math.abs(ring.t - blk.t) < 1.01 && Math.abs(ring.w - blk.w) < 1.51 });
+      }
+      await app.ev(`(() => { document.querySelector('#view').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); __tf.setTool('brush'); __tf.shared.brushSize = 40; __tf.ui.showCutout = false; return 1; })()`);
+      const ok = rows.length === 2 && rows.every((r) => r.probes && r.ring && r.shaky && r.shaky.length === 1 && r.shaky[0][0] === MX && r.shaky[0][1] === MY) && rows[1].z === 20;
+      check('Main window pen with real mouse input: zoom reaches 20x; at high zoom the pixel shown under the pointer is the one erased up to its edges (just outside takes the neighbour), a shaky click is one pixel, the square frames the drawn pixel', ok, J(rows));
     }
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
