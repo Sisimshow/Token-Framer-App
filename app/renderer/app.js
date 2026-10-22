@@ -1198,7 +1198,8 @@ function refreshGrid() {
     cb.addEventListener('click', (e) => e.stopPropagation());
     cb.addEventListener('change', () => { it.selected = cb.checked; updateTile(i); updateBatchBar(); });
     const cv = el('canvas'); cv.width = 192; cv.height = 144;
-    t.append(cb, cv, el('div', 'nm', it.base), el('div', 'tag'));
+    const nm = el('div', 'nm', it.base); nm.title = it.base; // the full name on hover, the tile shows it cut short
+    t.append(cb, cv, nm, el('div', 'tag'));
     t.addEventListener('click', () => selectItem(i));
     it.tile = t;
     if (it.thumb) cv.getContext('2d').drawImage(it.thumb, 0, 0);

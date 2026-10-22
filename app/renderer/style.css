@@ -84,7 +84,7 @@ body.dragging #dropHint { display: flex; }
 
 #batchBar { display: flex; gap: 6px; align-items: center; }
 #grid { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
-.tile { flex: 0 0 104px; background: var(--panel); border: 2px solid transparent; border-radius: 4px; padding: 3px; position: relative; cursor: pointer; }
+.tile { flex: 0 0 104px; width: 104px; min-width: 0; /* a long name is cut with an ellipsis instead of widening the tile */ background: var(--panel); border: 2px solid transparent; border-radius: 4px; padding: 3px; position: relative; cursor: pointer; }
 .tile.cur { border-color: var(--accent); }
 .tile.skip { opacity: .45; }
 .tile canvas { width: 96px; height: 72px; display: block; background: #111; object-fit: contain; }
