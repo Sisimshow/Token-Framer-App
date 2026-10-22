@@ -4,11 +4,12 @@
 // per-image edits are never touched. Saved as a full-size PNG (a transparent cutout cannot be a lossy WebP).
 import { DEFAULTS } from './lib/composite.js';
 import { applyRemovalMask, buildEditedMask, stampStroke } from './lib/colorremoval.js';
-import { fitRect } from './lib/cleanframe.js';
-import { buildControls, el } from './ui-kit.js';
+import { DEFAULTS as CF_DEFAULTS, fitRect } from './lib/cleanframe.js';
+import { buildControls, el, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const KEYS = ['crEnabled', 'crColor', 'crThreshold', 'crEdgesOnly', 'crFeather', 'crGrow', 'crDefringe', 'aiSensitivity', 'aiBlur', 'aiOffset', 'wandTolerance', 'wandContiguous', 'brushSize', 'brushMode'];
+const CLEAN_KEYS = Object.keys(CF_DEFAULTS);   // the Clean frame settings (frame mode): refine radius, floor/ceiling, trim, resize
 const BACKGROUNDS = { checker: '', black: '#000', white: '#fff', magenta: '#ff00ff', green: '#00b140' };
 const TOOL_HINTS = {
   wand: 'Wand: click the background you want cut out (Tolerance and Contiguous are below).',
@@ -23,13 +24,16 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   const ctx = canvas.getContext('2d');
   const S = canvas.width;
   const stage = canvas.parentElement;           // .tsView, the positioning parent of the brush ring and the rubber band
-  const params = Object.fromEntries(KEYS.map((k) => [k, DEFAULTS[k]]));
+  const defaults = () => ({ ...Object.fromEntries(KEYS.map((k) => [k, DEFAULTS[k]])), ...CF_DEFAULTS, cleanEnabled: true });
+  const params = defaults();
+  const rpc = makeRpc('lib/cleanframe.worker.js', (m) => setMsg(`The cleanup worker stopped: ${m}`, true));
+  let cleanCanvas = null, cleanInfo = null, cleanStale = true, cleaning = false, cleanAgain = false, cleanTimer = 0;   // the cleaned frame (frame mode): the cutout run through lib/cleanframe.js in a worker
   let mode = 'image';                           // 'image' or 'frame': only the title, the default name and the second save button differ
   let src = null;                               // { path, name, w, h, canvas (the original), id (its ImageData, never changed) }
   let matte = null;                             // RMBG matte of `src`, once AI remove has run
   let edits = [], redoStack = [];               // {type:'ai'} | {type:'wand'|'rect'|'brush'}, see colorremoval.js
   let out = null, outCtx = null;                // the cutout (full size), what is shown and saved
-  let tool = null, showOriginal = false, busy = false, space = false, ui = null;
+  let tool = null, viewMode = 'cutout', busy = false, space = false, ui = null;
   let stroke = null, rect = null, pan = null, rebuildTimer = 0;
   const view = { z: 1, x: 0, y: 0 };            // zoom and pan of the preview, in canvas pixels
 
@@ -51,9 +55,50 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
       applyRemovalMask(id, mask, color, params.crFeather, params.crGrow, params.crDefringe, fixed);
     }
     outCtx.putImageData(id, 0, 0);
+    cleanStale = true;
+    scheduleClean();
     redraw();
     syncUi();
   }
+
+  // ---------------------------------------------------------------- frame cleaning (frame mode only, can be switched off)
+  const wantClean = () => mode === 'frame' && params.cleanEnabled && !!out;
+  const outBytes = () => { const d = outCtx.getImageData(0, 0, out.width, out.height).data; return d.buffer; };
+  /** Hands the current cutout to the worker (once per change, not once per slider move). */
+  async function feedClean() {
+    if (!cleanStale) return;
+    cleanStale = false;
+    const buf = outBytes();
+    const r = await rpc.ask({ type: 'setImage', rgba: buf, w: out.width, h: out.height }, [buf]);
+    cleanInfo = { hasAlpha: r.hasAlpha };
+  }
+  function scheduleClean() { clearTimeout(cleanTimer); cleanTimer = setTimeout(cleanRun, 80); }
+  async function cleanRun() {
+    if (cleaning) { cleanAgain = true; return; }
+    if (!wantClean()) { cleanCanvas = null; return; }
+    cleaning = true;
+    try {
+      do {
+        cleanAgain = false;
+        await feedClean();
+        const r = await rpc.ask({ type: 'preview', params: { ...params } });
+        cleanInfo = { hasAlpha: r.hasAlpha, w: r.w, h: r.h, ms: r.ms };
+        const c = document.createElement('canvas'); c.width = r.w; c.height = r.h;
+        c.getContext('2d').putImageData(new ImageData(r.rgba, r.w, r.h), 0, 0);
+        cleanCanvas = c;
+        if (!tool && viewMode === 'cleaned') setMsg(cleanMsg());
+        redraw();
+      } while (cleanAgain || cleanStale);
+    } catch (err) {
+      setMsg(`Could not clean the frame: ${err.message}`, true);
+    } finally {
+      cleaning = false;
+    }
+  }
+  const cleanOut = () => (params.resize === 'none' ? `${cleanInfo?.w}×${cleanInfo?.h}` : `${params.size}×${params.size}`);
+  const cleanMsg = () => (cleanInfo?.hasAlpha === false
+    ? 'There is no transparency yet, so there is nothing to refine or trim. Cut the background out first.'
+    : `Cleaned frame: trimmed to ${cleanInfo?.w}×${cleanInfo?.h} (from ${src.w}×${src.h}), output ${cleanOut()}. Save writes this.`);
   /** A slider can fire many times a second: rebuild once things settle. */
   function schedule() { clearTimeout(rebuildTimer); rebuildTimer = setTimeout(rebuild, 30); }
   function pushEdit(op) {
@@ -98,15 +143,16 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   function redraw() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, S, S);
-    const img = showOriginal ? src?.canvas : out;
+    const showClean = viewMode === 'cleaned' && wantClean();
+    const img = viewMode === 'original' ? src?.canvas : showClean ? cleanCanvas : out;
     if (!img) return;
-    const f = fitRect(img.width, img.height, S);
+    const f = showClean && params.resize === 'stretch' ? { x: 0, y: 0, w: S, h: S } : fitRect(img.width, img.height, S);
     ctx.setTransform(view.z, 0, 0, view.z, view.x, view.y);
     ctx.imageSmoothingEnabled = view.z < 2;   // zoomed in far enough, show real pixels so single-pixel edits can be judged
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, f.x, f.y, f.w, f.h);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    $('#brBadge').textContent = src ? `${showOriginal ? 'Original' : 'Cutout'}${view.z > 1 ? ` · ${Math.round(view.z * 100)}%` : ''}` : '';
+    $('#brBadge').textContent = src ? `${viewMode === 'original' ? 'Original' : showClean ? 'Cleaned frame' : 'Cutout'}${view.z > 1 ? ` · ${Math.round(view.z * 100)}%` : ''}` : '';
   }
   const resetView = () => { view.z = 1; view.x = 0; view.y = 0; redraw(); };
   const canvasPoint = (e) => { const r = canvas.getBoundingClientRect(); return { x: ((e.clientX - r.left) / r.width) * S, y: ((e.clientY - r.top) / r.height) * S }; };
@@ -163,7 +209,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   canvas.addEventListener('pointerdown', (e) => {
     if (!src) return;
     try { canvas.setPointerCapture(e.pointerId); } catch { /* a synthetic event has no real pointer */ }
-    if (panning(e) || !tool) { if (view.z > 1) pan = { px: e.clientX, py: e.clientY, x: view.x, y: view.y }; return; }
+    if (panning(e) || !tool || viewMode !== 'cutout') { if (view.z > 1) pan = { px: e.clientX, py: e.clientY, x: view.x, y: view.y }; return; }
     if (e.button !== 0) return;
     const p = srcPoint(e);
     if (tool === 'wand') {
@@ -278,14 +324,37 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     { k: 'wandTolerance', label: 'Wand tolerance', min: 0, max: 100, step: 1, show: () => tool === 'wand' },
     { k: 'wandContiguous', label: 'Wand contiguous', t: 'check', show: () => tool === 'wand' },
     { k: 'brushSize', label: 'Brush (image px)', min: 1, max: 600, step: 1, show: () => tool === 'brush' },
-    { k: 'brushMode', label: 'Brush mode', t: 'select', opts: [['erase', 'Erase'], ['restore', 'Restore']], show: () => tool === 'brush' }
+    { k: 'brushMode', label: 'Brush mode', t: 'select', opts: [['erase', 'Erase'], ['restore', 'Restore']], show: () => tool === 'brush' },
+    { t: 'subhead', label: 'Clean frame', show: () => mode === 'frame' },
+    { k: 'cleanEnabled', label: 'Clean the frame', t: 'check', show: () => mode === 'frame', tip: 'Run the finished cutout through the Clean frame steps when saving: refine the edges, trim the empty border, resize. Turn it off to save the cutout as it is.' },
+    ...[
+      { k: 'radius', label: 'Refine radius', min: 0, max: 10, step: 1, tip: 'Radius in pixels of the original image for the alpha refinement. Bigger smooths more noise but softens fine detail. 0 skips the refinement.' },
+      { k: 'smoothing', label: 'Smoothing', min: 0.0001, nmin: 0.000001, max: 0.1, step: 0.0001, tip: 'How strongly the refinement follows the image colours (the filter\'s regulariser). Very small values can look noisy.' },
+      { k: 'floor', label: 'Alpha floor', min: 0, max: 1, step: 0.01, tip: 'After refining, alpha below this becomes fully transparent. 0 turns it off.' },
+      { k: 'solidify', label: 'Solidify', min: 0, max: 4, step: 1, tip: 'Firms up semi-transparent pixels, like stacking the image on itself. Each step roughly doubles the effect.' },
+      { k: 'ceiling', label: 'Alpha ceiling', min: 0, max: 1, step: 0.01, tip: 'After solidifying, alpha above this becomes fully opaque. 1 turns it off.' },
+      { k: 'threshold', label: 'Crop threshold', min: 0, max: 1, step: 0.001, tip: 'Pixels with alpha above this count as part of the frame when trimming the empty border.' },
+      { k: 'padding', label: 'Padding (px)', min: 0, max: 500, step: 1, tip: 'Extra pixels kept around the trimmed frame (never beyond the original image).' },
+      { k: 'resize', label: 'Resize', t: 'select', opts: [['fit', 'Fit, pad to a square'], ['stretch', 'Stretch to a square'], ['none', 'Keep trimmed size']], tip: 'Fit keeps the aspect ratio and centres the frame on a transparent square. Stretch squeezes it to fill (what the ComfyUI workflow does).' },
+      { k: 'size', label: 'Size (px)', min: 128, max: 8192, step: 1, numberOnly: true, show: (p) => p.resize !== 'none' }
+    ].map((c) => ({ ...c, show: (p) => mode === 'frame' && p.cleanEnabled && (c.show ? c.show(p) : true) }))
   ];
   function onParam(k) {
+    if (CLEAN_KEYS.includes(k) || k === 'cleanEnabled') {
+      if (k === 'cleanEnabled' && !params.cleanEnabled) cleanCanvas = null;
+      if (k === 'resize' || k === 'size') redraw(); else scheduleClean();   // the preview shows the trimmed frame, only the export is resized
+      syncUi(); redraw();
+      return;
+    }
     if (k === 'brushSize' || k === 'brushMode' || k === 'wandTolerance' || k === 'wandContiguous') return; // only used by the next stroke or click
     schedule();
   }
   function syncUi() {
     ui?.sync();
+    const viewSel = $('#brView'), cleanedOpt = viewSel.querySelector('option[value="cleaned"]');
+    cleanedOpt.hidden = cleanedOpt.disabled = !(mode === 'frame' && params.cleanEnabled);
+    if (viewMode === 'cleaned' && cleanedOpt.disabled) { viewMode = 'cutout'; redraw(); }
+    viewSel.value = viewMode;
     const on = !!out;
     $('#brSave').disabled = $('#brSaveUse').disabled = !on || busy;
   }
@@ -322,6 +391,13 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
 
   async function saveTo(outPath) {
     if (!out) throw new Error('Open an image first');
+    if (wantClean()) { // the finished cutout through the Clean frame steps, encoded by the worker
+      clearTimeout(cleanTimer);
+      await feedClean();
+      const r = await rpc.ask({ type: 'export', params: { ...params } });
+      await api.writeFile(outPath, r.png);
+      return { path: outPath, w: r.w, h: r.h, bytes: r.png.length };
+    }
     const blob = await new Promise((res, rej) => out.toBlob((b) => (b ? res(b) : rej(new Error('PNG encode failed'))), 'image/png'));
     const bytes = new Uint8Array(await blob.arrayBuffer());
     await api.writeFile(outPath, bytes);
@@ -360,6 +436,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     root.hidden = false;
     $('#brTitle').textContent = mode === 'frame' ? 'Remove frame background' : 'Remove image background';
     $('#brSaveUse').textContent = mode === 'frame' ? 'Save and use as frame' : 'Save and open as image';
+    cleanCanvas = null; cleanStale = true; if (wantClean()) scheduleClean();
     $('#brSaveUse').title = mode === 'frame' ? 'Save the cutout as a PNG, then use it as the frame in Token Framer' : 'Save the cutout as a PNG, then open it in Token Framer as the art image';
     if (!ui) ui = buildControls($('#brControls'), SPEC, params, onParam);
     syncUi();
@@ -372,11 +449,14 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   $('#brSaveUse').onclick = () => saveClicked(true);
   $('#brReset').onclick = () => {
     if (src && (edits.length || params.crEnabled) && !confirm('Put every control back to its default and remove all edits?')) return;
-    Object.assign(params, Object.fromEntries(KEYS.map((k) => [k, DEFAULTS[k]])));
+    Object.assign(params, defaults());
     edits = []; redoStack = [];
     rebuild();
   };
-  $('#brOriginal').onchange = (e) => { showOriginal = e.target.checked; redraw(); };
+  $('#brView').onchange = (e) => {
+    viewMode = e.target.value; stroke = null; rect = null; ring.hidden = band.hidden = true; resetView();
+    if (viewMode === 'cleaned') { if (cleanCanvas) setMsg(cleanMsg()); else scheduleClean(); }
+  };
   $('#brBg').onchange = (e) => { canvas.style.background = BACKGROUNDS[e.target.value] || ''; };
   root.addEventListener('dragover', (e) => e.preventDefault());
   root.addEventListener('drop', async (e) => { // not stopped, so the window-level handler still clears the drag highlight
@@ -395,6 +475,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     get tool() { return tool; },
     get mode() { return mode; },
     get result() { return out; },
+    get cleaned() { return wantClean() ? cleanCanvas : null; },
     get original() { return src?.canvas || null; },
     get matte() { return matte; },
     /** For tests: pointer position of a source pixel, in client coordinates. */

@@ -494,11 +494,23 @@ async function main() {
     const after = await app.ev(`(async () => { const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(outP)})])); const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d'); x.drawImage(bm, 0, 0);
       const a = (px, py) => x.getImageData(px, py, 1, 1).data[3]; return { w: bm.width, h: bm.height, corner: a(3, 3), items: __tf.items.length, path: __tf.items[0]?.path, closed: document.querySelector('#bgremove').hidden }; })()`);
     check('Remove background: Save and open as image writes the full-size PNG with transparency and opens it as the art image', magic === '89504e47' && saved.w === 200 && after.w === 200 && after.h === 160 && after.corner === 0 && after.items === 1 && after.path === outP && after.closed, J({ magic, saved: saved.w, after }));
+    const cleanedP = path.join(work, 'Cutout frame (cleaned).png');
+    fs.rmSync(cleanedP, { force: true });
     const fr = await app.ev(`(async () => { const wait = (ms) => new Promise((res) => setTimeout(res, ms)); const q = (x) => document.querySelector(x);
       q('#btnTools').click(); await wait(80); q('#btnRemoveFrame').click(); await wait(200);
-      const o = { title: q('#brTitle').textContent, button: q('#brSaveUse').textContent, mode: __tf.bgremove.mode, kept: !!__tf.bgremove.result };
-      const r = await __tf.bgremove.saveAndUse(${J(frameOutP)}); o.w = r.w; o.frame = __tf.frame.path; o.closed = q('#bgremove').hidden; return o; })()`);
+      const bm = __tf.bgremove; const o = { title: q('#brTitle').textContent, button: q('#brSaveUse').textContent, mode: bm.mode, kept: !!bm.result };
+      // frame cleaning is on by default in frame mode: the cutout is trimmed, refined and resized when saving; the Cleaned view shows the trimmed frame
+      o.cleanOn = bm.params.cleanEnabled; o.cleanRows = [...document.querySelectorAll('#brControls .row')].filter((r) => r.style.display !== 'none').map((r) => r.querySelector('label')?.textContent || r.textContent).filter((t) => /Refine radius|Crop threshold|Clean the frame|^Size/.test(t));
+      for (let i = 0; i < 80 && !bm.cleaned; i++) await wait(100);
+      o.trimmed = bm.cleaned ? [bm.cleaned.width, bm.cleaned.height] : null; o.viewOpt = !q('#brView option[value=cleaned]').disabled;
+      q('#brView').value = 'cleaned'; q('#brView').onchange({ target: q('#brView') }); await wait(100); o.badge = q('#brBadge').textContent;
+      const cl = await bm.saveTo(${J(cleanedP)}); o.cleanSaved = [cl.w, cl.h];
+      // switched off: the plain cutout is saved at its own size, the cleaned view and the Clean frame controls go away
+      bm.setParams({ cleanEnabled: false }); await wait(100);
+      o.off = { view: q('#brView').value, opt: q('#brView option[value=cleaned]').disabled, rows: [...document.querySelectorAll('#brControls .row')].filter((r) => r.style.display !== 'none' && /Refine radius|Crop threshold|Size \(px\)/.test(r.textContent)).length, cleaned: !!bm.cleaned };
+      const r = await bm.saveAndUse(${J(frameOutP)}); o.w = r.w; o.frame = __tf.frame.path; o.closed = q('#bgremove').hidden; return o; })()`);
     check('Remove background: the frame entry reopens the same image with a frame title and Save and use as frame, which loads the PNG as the frame', fr.title === 'Remove frame background' && fr.button === 'Save and use as frame' && fr.mode === 'frame' && fr.kept && fr.w === 200 && fr.frame === frameOutP && fr.closed, J(fr));
+    check('Remove background: frame cleaning is on by default (Clean frame controls shown, trimmed Cleaned view, saved trimmed and resized to the output size) and can be switched off entirely', fr.cleanOn === true && fr.cleanRows.length >= 4 && fr.trimmed && fr.trimmed[0] < 200 && fr.viewOpt && fr.badge.startsWith('Cleaned frame') && J(fr.cleanSaved) === J([1000, 1000]) && fr.off.view === 'cutout' && fr.off.opt && fr.off.rows === 0 && fr.off.cleaned === false, J(fr));
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);

@@ -13,6 +13,9 @@ self.onmessage = async ({ data }) => {
       // keep a straight copy for the "show original" view
       const orig = new Uint8ClampedArray(d.data);
       self.postMessage({ type, id, w: d.width, h: d.height, hasAlpha: cleaner.hasAlpha, rgba: orig }, [orig.buffer]);
+    } else if (type === 'setImage') { // raw RGBA from the caller (the Remove background screen hands over its cutout)
+      cleaner.setImage(new Uint8ClampedArray(data.rgba), data.w, data.h);
+      self.postMessage({ type, id, hasAlpha: cleaner.hasAlpha });
     } else if (type === 'preview') {
       const t = performance.now();
       const r = cleaner.preview(data.params);

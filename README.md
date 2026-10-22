@@ -41,7 +41,8 @@ Personal-use project, largely AI-written.
 - **Tools > Clean image…** removes compression noise and artifacts from an *opaque* image with a converted restoration model (1x_PureVision), with a zoomable before/after view. Nothing runs when you open an image: press **Process** when you are ready (the models can take a while).
   The model works on RGB only, so it cannot clean an image that already has transparency. Saved as a PNG; **Save and open as image** also opens it in Token Framer.
 - **Tools > Remove image background… / Remove frame background…** is the main window's cutout toolbox (AI remove, remove a colour, magic wand, brush, rectangle, feather/grow/defringe, undo/redo) on a screen of
-  its own, for one image or frame at a time: pick a file, cut the background out, then **Save as…** (a full-size transparent PNG) or **Save and open as image / use as frame**. Its edits are separate from the
+  its own, for one image or frame at a time: pick a file, cut the background out, then **Save as…** (a full-size transparent PNG) or **Save and open as image / use as frame**. In frame mode a **Clean frame** section (on by default, can be switched off) trims, refines and resizes the cutout when
+  you save, with a "Cleaned frame" view to check it. Its edits are separate from the
   main window's and last until you open another image. Space+drag pans, scroll zooms, Esc puts the tool down.
 - **Tools > Upscale image…** enlarges an *opaque* image 2×, 3× or 4× (default 4×; the models always make 4×, so 2× and 3× shrink the result afterwards) with an upscaling model (4x-UltraMix_Smooth by default, or the 4x-UltraSharpV2 DAT model) on the same
   screen as Clean image; saved as a PNG.

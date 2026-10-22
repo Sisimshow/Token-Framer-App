@@ -64,7 +64,7 @@ export function makeRpc(url, onFatal = () => {}) {
 export function buildControls(host, spec, params, onChange) {
   const rows = [];
   for (const c of spec) {
-    if (c.t === 'subhead') { host.append(el('div', 'row subhead', c.label)); continue; }
+    if (c.t === 'subhead') { c.row = el('div', 'row subhead', c.label); c.sync = () => {}; host.append(c.row); rows.push(c); continue; } // `show` works on headings too
     const row = el('div', c.full ? 'row full' : 'row');
     if (c.tip) row.title = c.tip;
     const ctl = el('div', 'ctl');
