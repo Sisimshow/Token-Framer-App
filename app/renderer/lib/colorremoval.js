@@ -133,12 +133,13 @@ export function stampStroke(mask, w, h, pts, r, value) {
   }
 }
 
-// Pixel pen. A brush under 3 px wide is no longer a disc: it paints whole pixels, exactly the ones under the pointer. Points are image coordinates where pixel i spans
-// [i, i + 1), so the pixel under the pointer is floor(x). Size 1 is that one pixel; size 2 is the 2x2 block around the nearest pixel corner. Strokes are joined with a
-// Bresenham line, so they are gapless and never fatter than the pen. (The old disc code rounded the pointer to the nearest pixel centre, half a pixel off.)
-export const penSize = (brushSize) => (brushSize < 3 ? (brushSize < 1.5 ? 1 : 2) : 0); // 0 = the normal round brush
+// Pixel pen. A brush of 1 to 3 px is no longer a disc: it paints whole pixels, exactly the ones under the pointer. Points are image coordinates where pixel i spans
+// [i, i + 1), so the pixel under the pointer is floor(x). Size 1 is that pixel, size 3 is the 3x3 block centred on it, size 2 is the 2x2 block around the nearest pixel
+// corner. Strokes are joined with a Bresenham line, so they are gapless and never fatter than the pen. (The old disc code rounded the pointer to the nearest pixel
+// centre, half a pixel off, and a size 3 disc is a rounded plus, not a 3x3 block.)
+export const penSize = (brushSize) => (brushSize < 3.5 ? Math.min(3, Math.max(1, Math.round(brushSize))) : 0); // 0 = the normal round brush
 /** Top-left pixel of the pen block for a pointer at (x, y): what is stored in a pen edit's `pts`. */
-export const penAnchor = (x, y, n) => (n === 1 ? [Math.floor(x), Math.floor(y)] : [Math.round(x) - 1, Math.round(y) - 1]);
+export const penAnchor = (x, y, n) => (n % 2 ? [Math.floor(x) - (n - 1) / 2, Math.floor(y) - (n - 1) / 2] : [Math.round(x) - n / 2, Math.round(y) - n / 2]);
 /** Every pixel a pen of `n` x `n` covers when its anchor moves along the integer `pts`. */
 export function penPixels(pts, n, w, h, put) {
   const block = (ax, ay) => { for (let y = ay; y < ay + n; y++) for (let x = ax; x < ax + n; x++) if (x >= 0 && x < w && y >= 0 && y < h) put(y * w + x); };

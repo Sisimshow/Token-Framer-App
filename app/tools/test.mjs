@@ -53,6 +53,13 @@ class App {
     if (d.error || d.result?.exceptionDetails) throw new Error(JSON.stringify(d.error || d.result.exceptionDetails.exception?.description || d.result.exceptionDetails));
     return d.result.result.value;
   }
+  /** A raw DevTools command (used for real mouse input). */
+  send(method, params = {}) {
+    const id = ++this.id;
+    const reply = new Promise((r) => this.pending.set(id, r));
+    this.ws.send(JSON.stringify({ id, method, params }));
+    return reply;
+  }
   close() {
     try { this.ws.close(); } catch { /* already gone */ }
     if (process.platform === 'win32') { try { execFileSync('taskkill', ['/PID', String(this.proc.pid), '/T', '/F'], { stdio: 'ignore' }); } catch { /* exited */ } }
@@ -514,12 +521,13 @@ async function main() {
     // the pixel pen: a brush under 3 px paints exactly the pixels under the pointer (no half-pixel offset, no disc rounding), joined by a gapless line
     const pen = await app.ev(`(async () => {
       const cr = await import('./lib/colorremoval.js'); const o = {};
-      o.size = [cr.penSize(1), cr.penSize(2), cr.penSize(2.9), cr.penSize(3), cr.penSize(40)];
-      o.anchor = [cr.penAnchor(10.7, 5.2, 1), cr.penAnchor(10.4, 5.6, 2)];
+      o.size = [cr.penSize(1), cr.penSize(2), cr.penSize(2.9), cr.penSize(3), cr.penSize(3.4), cr.penSize(4), cr.penSize(40)];
+      o.anchor = [cr.penAnchor(10.7, 5.2, 1), cr.penAnchor(10.4, 5.6, 2), cr.penAnchor(10.7, 5.2, 3)];
       const W = 24, H = 16, m = new Uint8Array(W * H); cr.stampPixelStroke(m, W, H, [[2, 2], [10, 5]], 1, 1);
       const on = []; for (let i = 0; i < m.length; i++) if (m[i]) on.push([i % W, (i / W) | 0]);
       o.line = { n: on.length, ends: m[2 * W + 2] === 1 && m[5 * W + 10] === 1, connected: on.every(([x, y]) => on.some(([a, b]) => (a !== x || b !== y) && Math.abs(a - x) <= 1 && Math.abs(b - y) <= 1)) };
       const b = new Uint8Array(W * H); cr.stampPixelStroke(b, W, H, [[3, 3]], 2, 1); o.block = [...b].reduce((n, v) => n + v, 0) === 4 && b[3 * W + 3] && b[4 * W + 4] && !b[5 * W + 5];
+      const b3 = new Uint8Array(W * H); cr.stampPixelStroke(b3, W, H, [[3, 3]], 3, 1); o.block3 = [...b3].reduce((n, v) => n + v, 0) === 9 && b3[3 * W + 3] && b3[5 * W + 5] && b3[3 * W + 5] && b3[5 * W + 3] && !b3[6 * W + 6] && !b3[2 * W + 2];
       const c = new Uint8Array(W * H); cr.stampPixelStroke(c, W, H, [[-1, -1], [W - 1, H - 1]], 2, 1); o.clipped = true;
       // on the screen: a size 1 stroke from the centre of pixel (50,40) to the centre of pixel (54,40) paints exactly those five pixels
       const bm = __tf.bgremove; const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms));
@@ -546,7 +554,7 @@ async function main() {
       bm.setTool('brush'); bm.close();
       return o;
     })()`);
-    check('Pixel pen: sizes under 3 switch to pixel mode, the anchor is the pixel under the pointer (not the nearest centre), strokes are gapless Bresenham lines, a 2 px pen is a 2x2 block', J(pen.size) === J([1, 2, 2, 0, 0]) && J(pen.anchor) === J([[10, 5], [9, 5]]) && pen.line.n === 9 && pen.line.ends && pen.line.connected && pen.block, J({ size: pen.size, anchor: pen.anchor, line: pen.line, block: pen.block }));
+    check('Pixel pen: sizes 1 to 3 switch to pixel mode, the anchor is the pixel under the pointer (3 is centred on it), strokes are gapless Bresenham lines, 2 and 3 px pens are exact blocks', J(pen.size) === J([1, 2, 3, 3, 3, 0, 0]) && J(pen.anchor) === J([[10, 5], [9, 5], [9, 4]]) && pen.line.n === 9 && pen.line.ends && pen.line.connected && pen.block && pen.block3, J({ size: pen.size, anchor: pen.anchor, line: pen.line, block: pen.block }));
     check('Pixel pen on the screen: a size-1 stroke paints exactly the pixels under the pointer (nothing around them), the ring is a pixel square, size 2 paints a 2x2 block, restore brings back one pixel, same bytes as the shared maths', pen.ringPen && pen.size1.edit.px === 1 && pen.size1.edit.pts === 2 && J(pen.size1.edit.first) === J([50, 40]) && J(pen.size1.edit.last) === J([54, 40]) && J(pen.size1.hit) === J([0, 0, 0, 0, 0]) && J(pen.size1.around) === J([255, 255, 255, 255]) && pen.size2.px === 2 && J(pen.size2.hit) === J([0, 0, 0, 0]) && J(pen.size2.around) === J([255, 255, 255, 255]) && J(pen.restore) === J([0, 255, 0]) && pen.diff === 0, J(pen));
     // the main window's brush has the same pixel pen
     const mainPen = await app.ev(`(async () => {
@@ -562,6 +570,59 @@ async function main() {
       return o;
     })()`);
     check('Pixel pen in the main window: a size-1 brush stroke paints exactly the pixels under the pointer and the ring is a pixel square', mainPen.ring && mainPen.edit.px === 1 && J(mainPen.edit.first) === J([100, 100]) && J(mainPen.edit.last) === J([104, 100]) && J(mainPen.hit) === J([0, 0, 0, 0, 0]) && J(mainPen.around) === J([255, 255, 255, 255]), J(mainPen));
+    // REAL mouse input (DevTools Input events, not synthetic DOM events), against an image with one magenta marker pixel: at every zoom level the click must land on exactly that
+    // pixel, size 2 and 3 pens must erase exact 2x2 / 3x3 blocks, and what is DRAWN must match (the canvas is sized to the device pixels, so nothing is resampled)
+    {
+      const MW = 1200, MH = 900, MX = 600, MY = 450, markP = path.join(work, 'Marker.png');
+      await app.ev(`(async () => { const c = document.createElement('canvas'); c.width = ${MW}; c.height = ${MH}; const x = c.getContext('2d'); const d = x.createImageData(${MW}, ${MH});
+        for (let i = 0; i < ${MW} * ${MH}; i++) { d.data[i * 4] = 90 + (i % 13) * 4; d.data[i * 4 + 1] = 160; d.data[i * 4 + 2] = 90; d.data[i * 4 + 3] = 255; }
+        const m = (${MY} * ${MW} + ${MX}) * 4; d.data[m] = 255; d.data[m + 1] = 0; d.data[m + 2] = 255; x.putImageData(d, 0, 0);
+        await window.api.writeFile(${J(markP)}, new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer()));
+        document.querySelector('#btnTools').click(); await new Promise((r) => setTimeout(r, 100)); document.querySelector('#btnRemoveImage').click(); await new Promise((r) => setTimeout(r, 300));
+        await __tf.bgremove.loadPath(${J(markP)}); await new Promise((r) => setTimeout(r, 300)); })()`);
+      const mouse = (type, x, y, extra = {}) => app.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
+      const geo = await app.ev(`(() => { const c = document.querySelector('#brPreview'), r = c.getBoundingClientRect(); return { l: r.left + c.clientLeft, t: r.top + c.clientTop, w: r.width - 2 * c.clientLeft, backing: c.width, dpr: devicePixelRatio }; })()`);
+      const rows = [];
+      for (const size of [1, 2, 3]) {
+        await app.ev(`(__tf.bgremove.setParams({ brushSize: ${size}, brushMode: 'erase' }), __tf.bgremove.tool || __tf.bgremove.setTool('brush'), document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '0', bubbles: true })), 1)`);
+        await sleep(100);
+        for (let step = 0; step <= 12; step++) {
+          if (step > 0) { await app.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: geo.l + geo.w / 2, y: geo.t + geo.w / 2, deltaX: 0, deltaY: -100 }); await sleep(40); }
+          await app.ev(`__tf.bgremove.resetEdits(false)`);
+          const find = await app.ev(`(() => {
+            const c = document.querySelector('#brPreview'), g = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+            for (let i = 0; i < g.length; i += 4) if (g[i] > 240 && g[i + 1] < 20 && g[i + 2] > 240 && g[i + 3] > 200) { const p = i / 4; x0 = Math.min(x0, p % c.width); x1 = Math.max(x1, p % c.width); y0 = Math.min(y0, (p / c.width) | 0); y1 = Math.max(y1, (p / c.width) | 0); }
+            const r = c.getBoundingClientRect(), k = (r.width - 2 * c.clientLeft) / c.width;
+            return x1 < 0 ? null : { w: x1 - x0 + 1, cx: r.left + c.clientLeft + (x0 + (x1 - x0 + 1) / 2) * k, cy: r.top + c.clientTop + (y0 + (y1 - y0 + 1) / 2) * k };
+          })()`);
+          if (!find || find.w < 2) continue;                    // not enlarged enough yet to see the pixel as a block
+          await mouse('mouseMoved', find.cx, find.cy, { buttons: 0 }); await mouse('mousePressed', find.cx, find.cy); await mouse('mouseReleased', find.cx, find.cy); await sleep(100);
+          const r = await app.ev(`(() => {
+            const bm = __tf.bgremove, res = bm.result, g = res.getContext('2d').getImageData(0, 0, res.width, res.height).data; const hits = [];
+            for (let y = ${MY} - 3; y <= ${MY} + 3; y++) for (let x = ${MX} - 3; x <= ${MX} + 3; x++) if (g[(y * res.width + x) * 4 + 3] === 0) hits.push([x - ${MX}, y - ${MY}]);
+            const c = document.querySelector('#brPreview'), cg = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, br = c.getBoundingClientRect(), k = c.width / (br.width - 2 * c.clientLeft), bl = br.left + c.clientLeft, bt = br.top + c.clientTop;
+            const drawn = hits.map(([dx, dy]) => { const lt = bm.clientOf(${MX} + dx, ${MY} + dy), rb = bm.clientOf(${MX} + dx + 1, ${MY} + dy + 1); let clear = 0, total = 0;
+              for (let yy = Math.round((lt.y - bt) * k); yy < Math.round((rb.y - bt) * k); yy++) for (let xx = Math.round((lt.x - bl) * k); xx < Math.round((rb.x - bl) * k); xx++) { total++; if (cg[(yy * c.width + xx) * 4 + 3] === 0) clear++; } return clear === total && total > 0; });
+            return { px: bm.edits.at(-1)?.px, hits, drawn: drawn.every(Boolean) };
+          })()`);
+          const exact = size === 1 ? r.hits.length === 1 && r.hits[0][0] === 0 && r.hits[0][1] === 0
+            : size === 2 ? r.hits.length === 4 && r.hits.some(([a, b]) => a === 0 && b === 0)       // dead centre of a pixel ties between two corners: any 2x2 block covering it is right
+            : r.hits.length === 9 && r.hits.every(([a, b]) => Math.abs(a) <= 1 && Math.abs(b) <= 1);
+          rows.push({ size, step, ok: exact && r.px === size && r.drawn });
+        }
+      }
+      const bad = rows.filter((r) => !r.ok);
+      check('Pixel pen with real mouse input: at every zoom level a click erases exactly the pixel under the pointer (1 px), a 2x2 or a centred 3x3 block, and the canvas shows exactly that', rows.length >= 18 && bad.length === 0 && geo.backing === Math.round(geo.w * geo.dpr), J({ clicks: rows.length, bad: bad.slice(0, 4), backing: geo.backing, shown: +(geo.w * geo.dpr).toFixed(2) }));
+      await app.ev(`__tf.bgremove.close()`);
+    }
+    // the main window renders its preview larger when zoomed, so a zoomed-in source pixel is real detail, and goes back to 800 px at 1x
+    {
+      const zoomed = await app.ev(`(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const v = document.querySelector('#view'); const o = { start: document.querySelector('#preview').width };
+        for (let i = 0; i < 10; i++) v.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, clientX: v.getBoundingClientRect().left + 300, clientY: v.getBoundingClientRect().top + 300, bubbles: true, cancelable: true })); await wait(700);
+        o.zoom = +__tf.view.z.toFixed(2); o.zoomed = document.querySelector('#preview').width;
+        v.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); await wait(700); o.back = document.querySelector('#preview').width; return o; })()`);
+      check('Main window: the preview is rendered larger while zoomed in (up to 4096 px) and back at 800 px at 1x', zoomed.start === 800 && zoomed.zoom > 2 && zoomed.zoomed > 800 && zoomed.zoomed <= 4096 && zoomed.back === 800, J(zoomed));
+    }
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);

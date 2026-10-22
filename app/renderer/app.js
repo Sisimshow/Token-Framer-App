@@ -521,7 +521,7 @@ async function renderPreview() {
   const cut = hasCutout(cfg) || state.stroke ? previewCut(cfg) : null;
   // pixel view renders at 2x so each source pixel is a visible block when zoomed, drawn without smoothing
   const crisp = !!state.ui.pixelView;
-  const size = crisp ? PREVIEW * 2 : PREVIEW;
+  const size = previewSize();
   if (cv.width !== size) { cv.width = size; cv.height = size; }
   ctx.clearRect(0, 0, size, size);
   if (state.ui.showCutout) {
@@ -536,6 +536,14 @@ async function renderPreview() {
 }
 
 // zoom / pan (CSS transform on the preview canvas, like the module's dialog)
+/**
+ * The preview's resolution. It is 800 px (1600 in pixel view) until you zoom in; then it is rendered larger (up to 4096) so that zooming shows real detail instead of an
+ * enlarged 800 px picture. Without that a source pixel of big art is a fraction of a preview pixel and single-pixel edits cannot be seen (or judged) at all.
+ */
+function previewSize() {
+  const hi = Math.min(4096, PREVIEW * 2 ** Math.ceil(Math.log2(Math.max(1, state.view.z) - 1e-9)));
+  return state.ui.pixelView ? Math.min(4096, Math.max(PREVIEW * 2, hi * 2)) : hi;
+}
 function applyView() {
   const v = state.view;
   const size = $('#view').clientWidth;
@@ -546,6 +554,7 @@ function applyView() {
   const b = $('#zoomBadge');
   b.hidden = v.z === 1;
   b.textContent = `${v.z.toFixed(1)}×`;
+  if (state.base && state.frame && $('#preview').width !== previewSize()) schedulePreview(0); // zoomed far enough for a sharper render
 }
 
 function setupView() {
@@ -598,7 +607,7 @@ function setupView() {
 // Edits live in the current image's override as popEdits (source-image pixel coordinates), see colorremoval.js.
 const TOOL_HINTS = {
   wand: 'Wand: click the background you want cut out (Tolerance and Contiguous are below).',
-  brush: 'Brush: drag to erase (or restore, see Brush mode). Under 3 px it paints single pixels. Space+drag or middle mouse pans.',
+  brush: 'Brush: drag to erase (or restore, see Brush mode). From 1 to 3 px it paints exact pixels. Space+drag or middle mouse pans.',
   rect: 'Rectangle: drag a box to erase everything inside it. Space+drag or middle mouse pans.'
 };
 

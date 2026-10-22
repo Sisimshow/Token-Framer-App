@@ -4,7 +4,7 @@
 // per-image edits are never touched. Saved as a full-size PNG (a transparent cutout cannot be a lossy WebP).
 import { DEFAULTS } from './lib/composite.js';
 import { applyRemovalMask, buildEditedMask, penAnchor, penSize, stampPixelStroke, stampStroke } from './lib/colorremoval.js';
-import { DEFAULTS as CF_DEFAULTS, fitRect } from './lib/cleanframe.js';
+import { DEFAULTS as CF_DEFAULTS } from './lib/cleanframe.js';
 import { buildControls, el, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -13,7 +13,7 @@ const CLEAN_KEYS = Object.keys(CF_DEFAULTS);   // the Clean frame settings (fram
 const BACKGROUNDS = { checker: '', black: '#000', white: '#fff', magenta: '#ff00ff', green: '#00b140' };
 const TOOL_HINTS = {
   wand: 'Wand: click the background you want cut out (Tolerance and Contiguous are below).',
-  brush: 'Brush: drag to erase (or restore, see Brush mode). Under 3 px it paints single pixels.',
+  brush: 'Brush: drag to erase (or restore, see Brush mode). From 1 to 3 px it paints exact pixels.',
   rect: 'Rectangle: drag a box to erase everything inside it.'
 };
 const HELP = 'Scroll to zoom, hold Space and drag (or middle mouse) to pan, 0 resets the zoom.';
@@ -22,7 +22,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   const root = $('#bgremove');
   const canvas = $('#brPreview');
   const ctx = canvas.getContext('2d');
-  const S = canvas.width;
+  let S = canvas.width;                         // the canvas' backing size in device pixels; kept equal to what is shown (see sizeCanvas), so nothing is ever resampled by the browser
   const stage = canvas.parentElement;           // .tsView, the positioning parent of the brush ring and the rubber band
   const defaults = () => ({ ...Object.fromEntries(KEYS.map((k) => [k, DEFAULTS[k]])), ...CF_DEFAULTS, cleanEnabled: true });
   const params = defaults();
@@ -35,7 +35,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   let out = null, outCtx = null;                // the cutout (full size), what is shown and saved
   let tool = null, viewMode = 'cutout', busy = false, space = false, ui = null;
   let stroke = null, rect = null, pan = null, rebuildTimer = 0;
-  const view = { z: 1, x: 0, y: 0 };            // zoom and pan of the preview, in canvas pixels
+  const view = { a: 1, ox: 0, oy: 0, fitted: true }; // a: device pixels per image pixel; ox/oy: where the image's top-left corner is, in device pixels; fitted: showing the whole image
 
   const setMsg = (text, warn = false) => { const m = $('#brMsg'); m.textContent = text; m.style.color = warn ? 'var(--warn)' : ''; };
   const hasAi = () => edits.some((e) => e.type === 'ai');
@@ -140,38 +140,104 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   });
 
   // ---------------------------------------------------------------- drawing and the view
+  // Precision matters here: a pixel pen is only as good as what is drawn. The canvas is exactly as many device pixels as it is shown at, and from 1 device pixel per image
+  // pixel upwards the zoom is a whole number and the image sits on whole device pixels, so every image pixel is an exact k x k block (nearest neighbour, no dashes). Below
+  // that the image is smoothed. ONE layout (origin()) serves the drawing, the pointer mapping and the brush ring, so they cannot drift apart.
+  const MAX_A = 64;
+  const shownImage = () => (viewMode === 'original' ? src?.canvas : viewMode === 'cleaned' && wantClean() ? cleanCanvas : out);
+  const fitA = (w, h) => { const b = S / Math.max(w, h); return b >= 1 ? Math.floor(b) : b; };   // the whole image, at a whole zoom when it is smaller than the canvas
+  function fitView(w, h) { view.a = fitA(w, h); view.ox = (S - w * view.a) / 2; view.oy = (S - h * view.a) / 2; view.fitted = true; }
+  /** The layout in use: zoom and image origin, snapped to whole device pixels when the image is enlarged. */
+  function origin() {
+    if (view.a < 1) return { a: view.a, ox: view.ox, oy: view.oy };
+    return { a: Math.max(1, Math.round(view.a)), ox: Math.round(view.ox), oy: Math.round(view.oy) };
+  }
   function redraw() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, S, S);
     const showClean = viewMode === 'cleaned' && wantClean();
-    const img = viewMode === 'original' ? src?.canvas : showClean ? cleanCanvas : out;
+    const img = shownImage();
     if (!img) return;
-    const f = showClean && params.resize === 'stretch' ? { x: 0, y: 0, w: S, h: S } : fitRect(img.width, img.height, S);
-    ctx.setTransform(view.z, 0, 0, view.z, view.x, view.y);
-    ctx.imageSmoothingEnabled = view.z < 2;   // zoomed in far enough, show real pixels so single-pixel edits can be judged
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, f.x, f.y, f.w, f.h);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    $('#brBadge').textContent = src ? `${viewMode === 'original' ? 'Original' : showClean ? 'Cleaned frame' : 'Cutout'}${view.z > 1 ? ` · ${Math.round(view.z * 100)}%` : ''}` : '';
+    if (showClean && params.resize === 'stretch') { ctx.imageSmoothingEnabled = true; ctx.drawImage(img, 0, 0, S, S); } // squeezed to the square, as the export does
+    else {
+      if (view.fitted) fitView(img.width, img.height);
+      const { a, ox, oy } = origin();
+      if (a >= 1) { // enlarged: real pixels, drawn only where they are visible
+        ctx.imageSmoothingEnabled = false;
+        const x0 = Math.max(0, Math.floor(-ox / a)), x1 = Math.min(img.width, Math.ceil((S - ox) / a)), y0 = Math.max(0, Math.floor(-oy / a)), y1 = Math.min(img.height, Math.ceil((S - oy) / a));
+        if (x1 > x0 && y1 > y0) ctx.drawImage(img, x0, y0, x1 - x0, y1 - y0, ox + x0 * a, oy + y0 * a, (x1 - x0) * a, (y1 - y0) * a);
+      } else { ctx.imageSmoothingEnabled = true; ctx.drawImage(img, ox, oy, img.width * a, img.height * a); }
+    }
+    const a = origin().a;
+    $('#brBadge').textContent = src ? `${viewMode === 'original' ? 'Original' : showClean ? 'Cleaned frame' : 'Cutout'}${view.fitted ? '' : ` · ${Math.round((a / (window.devicePixelRatio || 1)) * 100)}%`}` : '';
   }
-  const resetView = () => { view.z = 1; view.x = 0; view.y = 0; redraw(); };
-  const canvasPoint = (e) => { const r = canvas.getBoundingClientRect(); return { x: ((e.clientX - r.left) / r.width) * S, y: ((e.clientY - r.top) / r.height) * S }; };
-  /** Pointer -> source-image pixel: undo the zoom/pan, then the fit into the square. */
+  const resetView = () => { const img = shownImage(); if (img) fitView(img.width, img.height); else view.fitted = true; redraw(); };
+
+  /** The canvas' content box in client coordinates (getBoundingClientRect includes the border, which is not part of the drawing). */
+  function box() {
+    const r = canvas.getBoundingClientRect(), bl = canvas.clientLeft, bt = canvas.clientTop;
+    return { l: r.left + bl, t: r.top + bt, w: r.width - 2 * bl, h: r.height - 2 * bt };
+  }
+  const devPoint = (e) => { const b = box(); return { x: ((e.clientX - b.l) / b.w) * S, y: ((e.clientY - b.t) / b.h) * S }; };
+  /** Pointer -> image coordinates, where pixel i spans [i, i + 1) (so the pixel under the pointer is floor). */
   function srcPoint(e) {
     if (!src) return null;
-    const c = canvasPoint(e), f = fitRect(src.w, src.h, S);
-    const qx = (c.x - view.x) / view.z, qy = (c.y - view.y) / view.z;
-    return { x: ((qx - f.x) * src.w) / f.w, y: ((qy - f.y) * src.h) / f.h };
+    const d = devPoint(e), { a, ox, oy } = origin();
+    return { x: (d.x - ox) / a, y: (d.y - oy) / a };
   }
+  /** Image coordinates -> client coordinates: the inverse of srcPoint. */
+  function clientOf(x, y) {
+    const b = box(), { a, ox, oy } = origin();
+    return { x: b.l + ((ox + x * a) / S) * b.w, y: b.t + ((oy + y * a) / S) * b.h };
+  }
+  const cssPerPx = () => (origin().a / S) * box().w;   // on-screen (CSS) pixels per image pixel
   const insideImage = (p) => p.x >= 0 && p.y >= 0 && p.x < src.w && p.y < src.h;
 
+  /** Zoom to `aNew` keeping the image point under `p` (device pixels) where it is. */
+  function setScale(aNew, p) {
+    const img = shownImage(); if (!img) return;
+    const o = origin(), lo = fitA(img.width, img.height);
+    aNew = Math.min(MAX_A, Math.max(lo, aNew));
+    if (aNew <= lo) { fitView(img.width, img.height); return redraw(); }
+    const sx = (p.x - o.ox) / o.a, sy = (p.y - o.oy) / o.a;
+    view.a = aNew; view.ox = p.x - sx * aNew; view.oy = p.y - sy * aNew; view.fitted = false;
+    redraw();
+  }
+  const stepIn = (a) => (a < 1 ? Math.min(1, a * 1.25) : Math.floor(a + 1e-9) + 1);
+  const stepOut = (a, lo) => Math.max(lo, a > 1 ? Math.ceil(a - 1e-9) - 1 : a / 1.25);
+  let wheelAcc = 0;
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const p = canvasPoint(e), z = Math.min(32, Math.max(1, view.z * Math.pow(1.15, -e.deltaY / 100)));
-    view.x = p.x - (p.x - view.x) * (z / view.z); view.y = p.y - (p.y - view.y) * (z / view.z); view.z = z;
-    if (z === 1) { view.x = 0; view.y = 0; }
-    redraw();
+    const img = shownImage(); if (!img) return;
+    wheelAcc += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    const steps = Math.trunc(wheelAcc / 100);
+    if (!steps) return;
+    wheelAcc -= steps * 100;
+    let a = origin().a;
+    const lo = fitA(img.width, img.height);
+    for (let i = 0; i < Math.abs(steps); i++) a = steps < 0 ? stepIn(a) : stepOut(a, lo);
+    setScale(a, devPoint(e));
   }, { passive: false });
+
+  /** Keep the canvas exactly as large as it is shown, in whole device pixels. Runs whenever the room for it changes. */
+  function sizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = canvas.style.height = '';                        // measure the size the layout gives it
+    const nat = canvas.getBoundingClientRect().width, bw = canvas.clientLeft;
+    if (!(nat > 8)) return;                                               // hidden
+    const n = Math.max(64, Math.floor((nat - 2 * bw) * dpr));
+    canvas.style.width = canvas.style.height = `${n / dpr + 2 * bw}px`;
+    if (n === S && canvas.width === n) return;
+    const o = origin(), img = shownImage();
+    const cx = (S / 2 - o.ox) / o.a, cy = (S / 2 - o.oy) / o.a;           // the image point at the middle, to keep it there
+    S = canvas.width = canvas.height = n;
+    if (!img || view.fitted) { view.fitted = true; return redraw(); }
+    const a = Math.min(MAX_A, Math.max(fitA(img.width, img.height), view.a >= 1 ? Math.max(1, Math.round(view.a)) : view.a));
+    view.a = a; view.ox = S / 2 - cx * a; view.oy = S / 2 - cy * a;
+    redraw();
+  }
+  new ResizeObserver(sizeCanvas).observe(stage);
 
   // ---------------------------------------------------------------- tools
   function setTool(t) {
@@ -206,17 +272,11 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     redraw();
   }
 
-  /** Image coordinates (pixel i spans [i, i + 1)) -> client coordinates: the inverse of srcPoint. */
-  function clientOf(x, y) {
-    const r = canvas.getBoundingClientRect(), f = fitRect(src.w, src.h, S);
-    const cx = (f.x + (x / src.w) * f.w) * view.z + view.x, cy = (f.y + (y / src.h) * f.h) * view.z + view.y;
-    return { x: r.left + (cx / S) * r.width, y: r.top + (cy / S) * r.height };
-  }
   const panning = (e) => space || e.button === 1;
   canvas.addEventListener('pointerdown', (e) => {
     if (!src) return;
     try { canvas.setPointerCapture(e.pointerId); } catch { /* a synthetic event has no real pointer */ }
-    if (panning(e) || !tool || viewMode !== 'cutout') { if (view.z > 1) pan = { px: e.clientX, py: e.clientY, x: view.x, y: view.y }; return; }
+    if (panning(e) || !tool || viewMode !== 'cutout') { if (!view.fitted) pan = { px: e.clientX, py: e.clientY, x: view.ox, y: view.oy }; return; }
     if (e.button !== 0) return;
     const p = srcPoint(e);
     if (tool === 'wand') {
@@ -232,14 +292,13 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   canvas.addEventListener('pointermove', (e) => {
     const sr = stage.getBoundingClientRect();
     if (pan) {
-      const r = canvas.getBoundingClientRect();
-      view.x = pan.x + ((e.clientX - pan.px) / r.width) * S; view.y = pan.y + ((e.clientY - pan.py) / r.height) * S;
+      const b = box();
+      view.ox = pan.x + ((e.clientX - pan.px) / b.w) * S; view.oy = pan.y + ((e.clientY - pan.py) / b.h) * S;
       redraw();
       return;
     }
     if (tool === 'brush' && src && !space) {
-      const r = canvas.getBoundingClientRect(), f = fitRect(src.w, src.h, S), pen = penSize(params.brushSize);
-      const perPx = (f.w / src.w) * view.z * (r.width / S);          // on-screen px per source pixel
+      const pen = penSize(params.brushSize), perPx = cssPerPx();   // on-screen px per source pixel
       const d = Math.max(3, params.brushSize * perPx);                // brush size is in source pixels
       ring.classList.toggle('pen', !!pen);
       if (pen) { // the pen paints whole pixels: show the exact block that the next click will hit, snapped to the pixel grid
