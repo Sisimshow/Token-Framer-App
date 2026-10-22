@@ -1,5 +1,5 @@
 import { DEFAULTS, compositeImage, resolvePlacement, baseRect } from './lib/composite.js';
-import { buildEditedMask, applyRemovalMask, stampStroke } from './lib/colorremoval.js';
+import { buildEditedMask, applyRemovalMask, stampStroke, stampPixelStroke, penAnchor, penSize } from './lib/colorremoval.js';
 import { detectHole, holeMaskCanvas } from './lib/holedetect.js';
 import { makeZip } from './lib/zip.js';
 import { MATTE_RES } from './lib/matte.js';
@@ -565,7 +565,7 @@ function setupView() {
   let drag = null;
   view.addEventListener('pointerdown', (e) => {
     if (state.tool && e.button === 0 && !state.space) { // tools draw; middle mouse / Space pan
-      view.setPointerCapture(e.pointerId);
+      try { view.setPointerCapture(e.pointerId); } catch { /* a synthetic event has no real pointer */ }
       toolDown(e);
       return;
     }
@@ -598,7 +598,7 @@ function setupView() {
 // Edits live in the current image's override as popEdits (source-image pixel coordinates), see colorremoval.js.
 const TOOL_HINTS = {
   wand: 'Wand: click the background you want cut out (Tolerance and Contiguous are below).',
-  brush: 'Brush: drag to erase (or restore, see Brush mode). Space+drag or middle mouse pans.',
+  brush: 'Brush: drag to erase (or restore, see Brush mode). Under 3 px it paints single pixels. Space+drag or middle mouse pans.',
   rect: 'Rectangle: drag a box to erase everything inside it. Space+drag or middle mouse pans.'
 };
 
@@ -624,6 +624,13 @@ function srcPoint(e) {
   const px = ((e.clientX - r.left) / r.width) * PREVIEW;
   const py = ((e.clientY - r.top) / r.height) * PREVIEW;
   return { x: ((px - br.x) * bm.width) / br.w, y: ((py - br.y) * bm.height) / br.h, scale: bm.width / br.w, w: bm.width, h: bm.height, cfg };
+}
+/** Source-image coordinates -> client coordinates: the inverse of srcPoint. */
+function clientOfSrc(x, y) {
+  const bm = state.base.bitmap;
+  const br = baseRect(resolveCfg(eff(), bm), bm, PREVIEW);
+  const r = $('#preview').getBoundingClientRect();
+  return { x: r.left + ((br.x + (x * br.w) / bm.width) / PREVIEW) * r.width, y: r.top + ((br.y + (y * br.h) / bm.height) / PREVIEW) * r.height };
 }
 const insideImage = (p) => p.x >= 0 && p.y >= 0 && p.x < p.w && p.y < p.h;
 
@@ -685,11 +692,17 @@ function liveBrush(seg) {
     cut.orig = cx.getImageData(0, 0, w, h);
   }
   if (!s.touched) s.touched = new Uint8Array(w * h);
-  stampStroke(cut.raw, w, h, seg, s.r, s.mode === 'restore' ? 0 : 1);
-  stampStroke(s.touched, w, h, seg, s.r, 1);
+  if (s.pen) { // pixel pen (brush under 3 px): whole pixels, `seg` holds anchor pixels
+    stampPixelStroke(cut.raw, w, h, seg, s.pen, s.mode === 'restore' ? 0 : 1);
+    stampPixelStroke(s.touched, w, h, seg, s.pen, 1);
+  } else {
+    stampStroke(cut.raw, w, h, seg, s.r, s.mode === 'restore' ? 0 : 1);
+    stampStroke(s.touched, w, h, seg, s.r, 1);
+  }
+  const reach = s.pen ? s.pen : s.r + 1, lo = s.pen ? 0 : reach; // a pen block grows right and down from its anchor
   const xs = seg.map((p) => p[0]), ys = seg.map((p) => p[1]);
-  const x0 = Math.max(0, Math.floor(Math.min(...xs) - s.r - 1)), x1 = Math.min(w - 1, Math.ceil(Math.max(...xs) + s.r + 1));
-  const y0 = Math.max(0, Math.floor(Math.min(...ys) - s.r - 1)), y1 = Math.min(h - 1, Math.ceil(Math.max(...ys) + s.r + 1));
+  const x0 = Math.max(0, Math.floor(Math.min(...xs) - lo)), x1 = Math.min(w - 1, Math.ceil(Math.max(...xs) + reach));
+  const y0 = Math.max(0, Math.floor(Math.min(...ys) - lo)), y1 = Math.min(h - 1, Math.ceil(Math.max(...ys) + reach));
   const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
   const id = cut.ctx.getImageData(x0, y0, bw, bh);
   for (let y = y0; y <= y1; y++) {
@@ -713,9 +726,10 @@ function toolDown(e) {
   if (state.tool === 'wand') {
     if (insideImage(p)) pushEdit({ type: 'wand', x: Math.round(p.x), y: Math.round(p.y), tol: p.cfg.wandTolerance, contiguous: !!p.cfg.wandContiguous });
   } else if (state.tool === 'brush') {
-    state.stroke = { r: Math.max(0.5, p.cfg.brushSize / 2), mode: p.cfg.brushMode, pts: [[p.x, p.y]], touched: null };
+    const pen = penSize(p.cfg.brushSize);
+    state.stroke = { r: Math.max(0.5, p.cfg.brushSize / 2), pen, mode: p.cfg.brushMode, pts: [pen ? penAnchor(p.x, p.y, pen) : [p.x, p.y]], touched: null };
     previewCut(p.cfg);
-    liveBrush([[p.x, p.y]]);
+    liveBrush(state.stroke.pts);
   } else if (state.tool === 'rect') {
     state.tdrag = { x0: p.x, y0: p.y, vx: e.clientX, vy: e.clientY };
   }
@@ -728,17 +742,29 @@ function toolMove(e) {
   const pp = state.tool === 'brush' ? srcPoint(e) : null;
   if (pp) {
     // brush size is in source-image pixels: convert to on-screen px (preview px per source px = 1/scale)
-    const d = Math.max(3, (eff().brushSize / pp.scale) * (vr.width / PREVIEW) * state.view.z);
-    ring.style.width = ring.style.height = `${d}px`;
-    ring.style.left = `${e.clientX - vr.left}px`;
-    ring.style.top = `${e.clientY - vr.top}px`;
+    const perPx = (1 / pp.scale) * (vr.width / PREVIEW) * state.view.z;
+    const pen = penSize(eff().brushSize);
+    ring.classList.toggle('pen', !!pen);
+    if (pen) { // the pen paints whole pixels: show the exact block the next click will hit, snapped to the pixel grid
+      const a = penAnchor(pp.x, pp.y, pen), c = clientOfSrc(a[0] + pen / 2, a[1] + pen / 2);
+      ring.style.width = ring.style.height = `${Math.max(3, pen * perPx)}px`;
+      ring.style.left = `${c.x - vr.left}px`;
+      ring.style.top = `${c.y - vr.top}px`;
+    } else {
+      ring.style.width = ring.style.height = `${Math.max(3, eff().brushSize * perPx)}px`;
+      ring.style.left = `${e.clientX - vr.left}px`;
+      ring.style.top = `${e.clientY - vr.top}px`;
+    }
     ring.hidden = false;
   } else ring.hidden = true;
   if (state.stroke) {
     const p = srcPoint(e);
     const s = state.stroke;
     const last = s.pts[s.pts.length - 1];
-    if (p && Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, s.r / 4)) {
+    if (p && s.pen) {
+      const a = penAnchor(p.x, p.y, s.pen);
+      if (a[0] !== last[0] || a[1] !== last[1]) { s.pts.push(a); liveBrush([last, a]); }
+    } else if (p && Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, s.r / 4)) {
       s.pts.push([p.x, p.y]);
       liveBrush([last, [p.x, p.y]]);
     }
@@ -759,7 +785,8 @@ function toolUp(e) {
   if (state.stroke) {
     const s = state.stroke;
     state.stroke = null;
-    pushEdit({ type: 'brush', mode: s.mode, r: Math.round(s.r * 10) / 10, pts: s.pts.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10]) });
+    if (s.pen) pushEdit({ type: 'brush', mode: s.mode, r: s.pen / 2, px: s.pen, pts: s.pts }); // pen: integer anchor pixels, kept exactly
+    else pushEdit({ type: 'brush', mode: s.mode, r: Math.round(s.r * 10) / 10, pts: s.pts.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10]) });
   } else if (state.tdrag) {
     const d = state.tdrag;
     state.tdrag = null;
@@ -1346,4 +1373,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, get bgremove() { return window.__bgremove; }, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, clientOfSrc, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, get bgremove() { return window.__bgremove; }, eff, compositeFor, resolveCfg }); // DevTools / tests

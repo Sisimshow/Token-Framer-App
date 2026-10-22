@@ -133,6 +133,31 @@ export function stampStroke(mask, w, h, pts, r, value) {
   }
 }
 
+// Pixel pen. A brush under 3 px wide is no longer a disc: it paints whole pixels, exactly the ones under the pointer. Points are image coordinates where pixel i spans
+// [i, i + 1), so the pixel under the pointer is floor(x). Size 1 is that one pixel; size 2 is the 2x2 block around the nearest pixel corner. Strokes are joined with a
+// Bresenham line, so they are gapless and never fatter than the pen. (The old disc code rounded the pointer to the nearest pixel centre, half a pixel off.)
+export const penSize = (brushSize) => (brushSize < 3 ? (brushSize < 1.5 ? 1 : 2) : 0); // 0 = the normal round brush
+/** Top-left pixel of the pen block for a pointer at (x, y): what is stored in a pen edit's `pts`. */
+export const penAnchor = (x, y, n) => (n === 1 ? [Math.floor(x), Math.floor(y)] : [Math.round(x) - 1, Math.round(y) - 1]);
+/** Every pixel a pen of `n` x `n` covers when its anchor moves along the integer `pts`. */
+export function penPixels(pts, n, w, h, put) {
+  const block = (ax, ay) => { for (let y = ay; y < ay + n; y++) for (let x = ax; x < ax + n; x++) if (x >= 0 && x < w && y >= 0 && y < h) put(y * w + x); };
+  if (!pts.length) return;
+  let [x, y] = pts[0];
+  block(x, y);
+  for (let i = 1; i < pts.length; i++) {
+    const [qx, qy] = pts[i], dx = Math.abs(qx - x), dy = -Math.abs(qy - y), sx = x < qx ? 1 : -1, sy = y < qy ? 1 : -1;
+    let err = dx + dy;
+    while (x !== qx || y !== qy) {
+      const e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x += sx; }
+      if (e2 <= dx) { err += dx; y += sy; }
+      block(x, y);
+    }
+  }
+}
+export function stampPixelStroke(mask, w, h, pts, n, value) { penPixels(pts, n, w, h, (i) => { mask[i] = value; }); }
+
 /**
  * Build the final removal mask: automatic color mask (when cfg.crEnabled) followed by the manual edits in order.
  * edits: {type:'wand',x,y,tol,contiguous} | {type:'rect',x0,y0,x1,y1} | {type:'brush',mode,r,pts}
@@ -169,8 +194,13 @@ export function buildEditedMask(imageData, cfg, edits = [], matte = null) {
       for (let y = y0; y <= y1; y++) { mask.fill(1, y * w + x0, y * w + x1 + 1); fixed.fill(1, y * w + x0, y * w + x1 + 1); }
     } else if (e.type === 'brush') {
       const restore = e.mode === 'restore';
-      stampStroke(mask, w, h, e.pts, e.r, restore ? 0 : 1);
-      stampStroke(fixed, w, h, e.pts, e.r, restore ? 2 : 1);
+      if (e.px) { // pixel pen (see penSize): `pts` are anchor pixels
+        stampPixelStroke(mask, w, h, e.pts, e.px, restore ? 0 : 1);
+        stampPixelStroke(fixed, w, h, e.pts, e.px, restore ? 2 : 1);
+      } else {
+        stampStroke(mask, w, h, e.pts, e.r, restore ? 0 : 1);
+        stampStroke(fixed, w, h, e.pts, e.r, restore ? 2 : 1);
+      }
     }
   }
   return { mask, color, fixed };

@@ -70,7 +70,8 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   click-to-pixel mapping and compositing both use it.
 - Per-image state lives in `item.override` (anything there beats the shared settings). Manual cutout edits are `override.popEdits`,
   in source-image pixels, applied in order on top of the automatic color mask; hand edits (brush, rectangle) are exempt from
-  grow/feather/defringe so single-pixel edits stay exact.
+  grow/feather/defringe so single-pixel edits stay exact. A brush under 3 px is a pixel pen (`penSize`/`penAnchor`/`stampPixelStroke` in `colorremoval.js`; edit `{type:'brush', px: 1|2, pts: integer anchor pixels}`):
+  whole pixels under the pointer joined by a Bresenham line, the ring becomes a pixel square. Older disc-based brush edits (no `px`) are replayed as before (they rounded the pointer to the nearest pixel centre, half a pixel off).
 - The cutout only affects the pop-out layer unless `crPopOutOnly` is off. Preview and export share `buildSources` / `compositeFor`,
   so they cannot drift.
 - "Edit this image only" (`state.editOnly`) follows the selected image: on when it has any `override`, off otherwise. With 2+ images, changing a

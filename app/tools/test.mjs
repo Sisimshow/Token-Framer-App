@@ -511,6 +511,57 @@ async function main() {
       const r = await bm.saveAndUse(${J(frameOutP)}); o.w = r.w; o.frame = __tf.frame.path; o.closed = q('#bgremove').hidden; return o; })()`);
     check('Remove background: the frame entry reopens the same image with a frame title and Save and use as frame, which loads the PNG as the frame', fr.title === 'Remove frame background' && fr.button === 'Save and use as frame' && fr.mode === 'frame' && fr.kept && fr.w === 200 && fr.frame === frameOutP && fr.closed, J(fr));
     check('Remove background: frame cleaning is on by default (Clean frame controls shown, trimmed Cleaned view, saved trimmed and resized to the output size) and can be switched off entirely', fr.cleanOn === true && fr.cleanRows.length >= 4 && fr.trimmed && fr.trimmed[0] < 200 && fr.viewOpt && fr.badge.startsWith('Cleaned frame') && J(fr.cleanSaved) === J([1000, 1000]) && fr.off.view === 'cutout' && fr.off.opt && fr.off.rows === 0 && fr.off.cleaned === false, J(fr));
+    // the pixel pen: a brush under 3 px paints exactly the pixels under the pointer (no half-pixel offset, no disc rounding), joined by a gapless line
+    const pen = await app.ev(`(async () => {
+      const cr = await import('./lib/colorremoval.js'); const o = {};
+      o.size = [cr.penSize(1), cr.penSize(2), cr.penSize(2.9), cr.penSize(3), cr.penSize(40)];
+      o.anchor = [cr.penAnchor(10.7, 5.2, 1), cr.penAnchor(10.4, 5.6, 2)];
+      const W = 24, H = 16, m = new Uint8Array(W * H); cr.stampPixelStroke(m, W, H, [[2, 2], [10, 5]], 1, 1);
+      const on = []; for (let i = 0; i < m.length; i++) if (m[i]) on.push([i % W, (i / W) | 0]);
+      o.line = { n: on.length, ends: m[2 * W + 2] === 1 && m[5 * W + 10] === 1, connected: on.every(([x, y]) => on.some(([a, b]) => (a !== x || b !== y) && Math.abs(a - x) <= 1 && Math.abs(b - y) <= 1)) };
+      const b = new Uint8Array(W * H); cr.stampPixelStroke(b, W, H, [[3, 3]], 2, 1); o.block = [...b].reduce((n, v) => n + v, 0) === 4 && b[3 * W + 3] && b[4 * W + 4] && !b[5 * W + 5];
+      const c = new Uint8Array(W * H); cr.stampPixelStroke(c, W, H, [[-1, -1], [W - 1, H - 1]], 2, 1); o.clipped = true;
+      // on the screen: a size 1 stroke from the centre of pixel (50,40) to the centre of pixel (54,40) paints exactly those five pixels
+      const bm = __tf.bgremove; const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+      bm.open('image'); await wait(100); await bm.loadPath(${J(path.join(work, 'Cutout me.png'))}); await wait(200);
+      const px = (xx, y) => bm.result.getContext('2d').getImageData(xx, y, 1, 1).data[3];
+      bm.setTool('brush'); bm.setParams({ brushSize: 1, brushMode: 'erase' });
+      const cv = q('#brPreview'), ev = (type, p) => cv.dispatchEvent(new PointerEvent(type, { clientX: p.x, clientY: p.y, button: 0, pointerId: 9, bubbles: true }));
+      const a = bm.clientOf(50.5, 40.5), z = bm.clientOf(54.5, 40.5);
+      ev('pointermove', a); o.ringPen = q('.brRing').classList.contains('pen'); ev('pointerdown', a); ev('pointermove', z); ev('pointerup', z);
+      const e1 = bm.edits[bm.edits.length - 1];
+      o.size1 = { edit: { px: e1.px, pts: e1.pts.length, first: e1.pts[0], last: e1.pts[e1.pts.length - 1] }, hit: [50, 51, 52, 53, 54].map((xx) => px(xx, 40)), around: [px(49, 40), px(55, 40), px(52, 39), px(52, 41)] };
+      // size 2 at a pixel corner: the 2x2 block around it
+      bm.setParams({ brushSize: 2 }); const k = bm.clientOf(100, 80); ev('pointerdown', k); ev('pointerup', k);
+      o.size2 = { px: bm.edits[bm.edits.length - 1].px, hit: [[99, 79], [100, 79], [99, 80], [100, 80]].map(([xx, y]) => px(xx, y)), around: [px(98, 79), px(101, 80), px(99, 78), px(100, 81)] };
+      // restore with size 1 brings back just that pixel
+      bm.setParams({ brushSize: 1, brushMode: 'restore' }); const r1 = bm.clientOf(52.5, 40.5); ev('pointerdown', r1); ev('pointerup', r1);
+      o.restore = [px(51, 40), px(52, 40), px(53, 40)];
+      // the same bytes as the main window's maths
+      const oc = bm.original, id = oc.getContext('2d').getImageData(0, 0, oc.width, oc.height);
+      const { mask, color, fixed } = cr.buildEditedMask(id, bm.params, bm.edits, null); cr.applyRemovalMask(id, mask, color, bm.params.crFeather, bm.params.crGrow, bm.params.crDefringe, fixed);
+      const t = document.createElement('canvas'); t.width = oc.width; t.height = oc.height; t.getContext('2d').putImageData(id, 0, 0);
+      const want = t.getContext('2d').getImageData(0, 0, t.width, t.height).data, got = bm.result.getContext('2d').getImageData(0, 0, t.width, t.height).data;
+      o.diff = 0; for (let i = 0; i < want.length; i++) if (want[i] !== got[i]) o.diff++;
+      bm.setTool('brush'); bm.close();
+      return o;
+    })()`);
+    check('Pixel pen: sizes under 3 switch to pixel mode, the anchor is the pixel under the pointer (not the nearest centre), strokes are gapless Bresenham lines, a 2 px pen is a 2x2 block', J(pen.size) === J([1, 2, 2, 0, 0]) && J(pen.anchor) === J([[10, 5], [9, 5]]) && pen.line.n === 9 && pen.line.ends && pen.line.connected && pen.block, J({ size: pen.size, anchor: pen.anchor, line: pen.line, block: pen.block }));
+    check('Pixel pen on the screen: a size-1 stroke paints exactly the pixels under the pointer (nothing around them), the ring is a pixel square, size 2 paints a 2x2 block, restore brings back one pixel, same bytes as the shared maths', pen.ringPen && pen.size1.edit.px === 1 && pen.size1.edit.pts === 2 && J(pen.size1.edit.first) === J([50, 40]) && J(pen.size1.edit.last) === J([54, 40]) && J(pen.size1.hit) === J([0, 0, 0, 0, 0]) && J(pen.size1.around) === J([255, 255, 255, 255]) && pen.size2.px === 2 && J(pen.size2.hit) === J([0, 0, 0, 0]) && J(pen.size2.around) === J([255, 255, 255, 255]) && J(pen.restore) === J([0, 255, 0]) && pen.diff === 0, J(pen));
+    // the main window's brush has the same pixel pen
+    const mainPen = await app.ev(`(async () => {
+      const T = __tf, wait = (ms) => new Promise((res) => setTimeout(res, ms)); const v = document.querySelector('#view'); const o = {};
+      T.shared.brushSize = 1; T.shared.brushMode = 'erase'; T.setTool('brush');
+      const ev = (type, p) => v.dispatchEvent(new PointerEvent(type, { clientX: p.x, clientY: p.y, button: 0, pointerId: 11, bubbles: true }));
+      const a = T.clientOfSrc(100.5, 100.5), z = T.clientOfSrc(104.5, 100.5);
+      ev('pointermove', a); o.ring = document.querySelector('#brushRing').classList.contains('pen'); ev('pointerdown', a); ev('pointermove', z); ev('pointerup', z); await wait(300);
+      const e = T.items[T.cur].override.popEdits.at(-1); o.edit = { px: e.px, first: e.pts[0], last: e.pts[e.pts.length - 1] };
+      const cut = T.buildCut(T.base.bitmap, T.eff()); const al = (x, y) => cut.canvas.getContext('2d').getImageData(x, y, 1, 1).data[3];
+      o.hit = [100, 101, 102, 103, 104].map((x) => al(x, 100)); o.around = [al(99, 100), al(105, 100), al(102, 99), al(102, 101)];
+      T.undo(); T.setTool('brush'); T.shared.brushSize = 40; await wait(100);
+      return o;
+    })()`);
+    check('Pixel pen in the main window: a size-1 brush stroke paints exactly the pixels under the pointer and the ring is a pixel square', mainPen.ring && mainPen.edit.px === 1 && J(mainPen.edit.first) === J([100, 100]) && J(mainPen.edit.last) === J([104, 100]) && J(mainPen.hit) === J([0, 0, 0, 0, 0]) && J(mainPen.around) === J([255, 255, 255, 255]), J(mainPen));
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);

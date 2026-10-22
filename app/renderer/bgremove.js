@@ -3,7 +3,7 @@
 // screen: local state, zoom/pan, pointer tools and saving. Edits belong to this screen and last until another image is opened (or the app is closed); the main window's
 // per-image edits are never touched. Saved as a full-size PNG (a transparent cutout cannot be a lossy WebP).
 import { DEFAULTS } from './lib/composite.js';
-import { applyRemovalMask, buildEditedMask, stampStroke } from './lib/colorremoval.js';
+import { applyRemovalMask, buildEditedMask, penAnchor, penSize, stampPixelStroke, stampStroke } from './lib/colorremoval.js';
 import { DEFAULTS as CF_DEFAULTS, fitRect } from './lib/cleanframe.js';
 import { buildControls, el, makeRpc } from './ui-kit.js';
 
@@ -13,7 +13,7 @@ const CLEAN_KEYS = Object.keys(CF_DEFAULTS);   // the Clean frame settings (fram
 const BACKGROUNDS = { checker: '', black: '#000', white: '#fff', magenta: '#ff00ff', green: '#00b140' };
 const TOOL_HINTS = {
   wand: 'Wand: click the background you want cut out (Tolerance and Contiguous are below).',
-  brush: 'Brush: drag to erase (or restore, see Brush mode).',
+  brush: 'Brush: drag to erase (or restore, see Brush mode). Under 3 px it paints single pixels.',
   rect: 'Rectangle: drag a box to erase everything inside it.'
 };
 const HELP = 'Scroll to zoom, hold Space and drag (or middle mouse) to pan, 0 resets the zoom.';
@@ -186,10 +186,11 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   function liveBrush(seg) {
     const s = stroke, w = src.w, h = src.h;
     if (!s.touched) s.touched = new Uint8Array(w * h);
-    stampStroke(s.touched, w, h, seg, s.r, 1);
-    const xs = seg.map((p) => p[0]), ys = seg.map((p) => p[1]);
-    const x0 = Math.max(0, Math.floor(Math.min(...xs) - s.r - 1)), x1 = Math.min(w - 1, Math.ceil(Math.max(...xs) + s.r + 1));
-    const y0 = Math.max(0, Math.floor(Math.min(...ys) - s.r - 1)), y1 = Math.min(h - 1, Math.ceil(Math.max(...ys) + s.r + 1));
+    const reach = s.pen ? s.pen : s.r + 1;                 // how far the stamp reaches from a point: a pen block grows right and down from its anchor
+    if (s.pen) stampPixelStroke(s.touched, w, h, seg, s.pen, 1); else stampStroke(s.touched, w, h, seg, s.r, 1);
+    const xs = seg.map((p) => p[0]), ys = seg.map((p) => p[1]), lo = s.pen ? 0 : reach;
+    const x0 = Math.max(0, Math.floor(Math.min(...xs) - lo)), x1 = Math.min(w - 1, Math.ceil(Math.max(...xs) + reach));
+    const y0 = Math.max(0, Math.floor(Math.min(...ys) - lo)), y1 = Math.min(h - 1, Math.ceil(Math.max(...ys) + reach));
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
     const id = outCtx.getImageData(x0, y0, bw, bh);
     for (let y = y0; y <= y1; y++) {
@@ -205,6 +206,12 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     redraw();
   }
 
+  /** Image coordinates (pixel i spans [i, i + 1)) -> client coordinates: the inverse of srcPoint. */
+  function clientOf(x, y) {
+    const r = canvas.getBoundingClientRect(), f = fitRect(src.w, src.h, S);
+    const cx = (f.x + (x / src.w) * f.w) * view.z + view.x, cy = (f.y + (y / src.h) * f.h) * view.z + view.y;
+    return { x: r.left + (cx / S) * r.width, y: r.top + (cy / S) * r.height };
+  }
   const panning = (e) => space || e.button === 1;
   canvas.addEventListener('pointerdown', (e) => {
     if (!src) return;
@@ -215,8 +222,9 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     if (tool === 'wand') {
       if (insideImage(p)) pushEdit({ type: 'wand', x: Math.round(p.x), y: Math.round(p.y), tol: params.wandTolerance, contiguous: !!params.wandContiguous });
     } else if (tool === 'brush') {
-      stroke = { r: Math.max(0.5, params.brushSize / 2), mode: params.brushMode, pts: [[p.x, p.y]], touched: null };
-      liveBrush([[p.x, p.y]]);
+      const pen = penSize(params.brushSize);
+      stroke = { r: Math.max(0.5, params.brushSize / 2), pen, mode: params.brushMode, pts: [pen ? penAnchor(p.x, p.y, pen) : [p.x, p.y]], touched: null };
+      liveBrush(stroke.pts);
     } else if (tool === 'rect') {
       rect = { x0: p.x, y0: p.y, vx: e.clientX, vy: e.clientY };
     }
@@ -230,15 +238,26 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
       return;
     }
     if (tool === 'brush' && src && !space) {
-      const r = canvas.getBoundingClientRect(), f = fitRect(src.w, src.h, S);
-      const d = Math.max(3, params.brushSize * (f.w / src.w) * view.z * (r.width / S));   // brush size is in source pixels
-      ring.style.width = ring.style.height = `${d}px`;
-      ring.style.left = `${e.clientX - sr.left}px`; ring.style.top = `${e.clientY - sr.top}px`;
+      const r = canvas.getBoundingClientRect(), f = fitRect(src.w, src.h, S), pen = penSize(params.brushSize);
+      const perPx = (f.w / src.w) * view.z * (r.width / S);          // on-screen px per source pixel
+      const d = Math.max(3, params.brushSize * perPx);                // brush size is in source pixels
+      ring.classList.toggle('pen', !!pen);
+      if (pen) { // the pen paints whole pixels: show the exact block that the next click will hit, snapped to the pixel grid
+        const q = srcPoint(e), a = penAnchor(q.x, q.y, pen), c = clientOf(a[0] + pen / 2, a[1] + pen / 2);
+        ring.style.width = ring.style.height = `${Math.max(3, pen * perPx)}px`;
+        ring.style.left = `${c.x - sr.left}px`; ring.style.top = `${c.y - sr.top}px`;
+      } else {
+        ring.style.width = ring.style.height = `${d}px`;
+        ring.style.left = `${e.clientX - sr.left}px`; ring.style.top = `${e.clientY - sr.top}px`;
+      }
       ring.hidden = false;
     } else ring.hidden = true;
     if (stroke) {
       const p = srcPoint(e), last = stroke.pts[stroke.pts.length - 1];
-      if (Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, stroke.r / 4)) { stroke.pts.push([p.x, p.y]); liveBrush([last, [p.x, p.y]]); }
+      if (stroke.pen) {
+        const a = penAnchor(p.x, p.y, stroke.pen);
+        if (a[0] !== last[0] || a[1] !== last[1]) { stroke.pts.push(a); liveBrush([last, a]); }
+      } else if (Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, stroke.r / 4)) { stroke.pts.push([p.x, p.y]); liveBrush([last, [p.x, p.y]]); }
     } else if (rect) {
       band.hidden = false;
       band.style.left = `${Math.min(rect.vx, e.clientX) - sr.left}px`; band.style.top = `${Math.min(rect.vy, e.clientY) - sr.top}px`;
@@ -251,7 +270,8 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     if (stroke) {
       const s = stroke; stroke = null;
       const r1 = (v) => Math.round(v * 10) / 10;
-      pushEdit({ type: 'brush', mode: s.mode, r: r1(s.r), pts: s.pts.map(([x, y]) => [r1(x), r1(y)]) });
+      if (s.pen) pushEdit({ type: 'brush', mode: s.mode, r: s.pen / 2, px: s.pen, pts: s.pts });   // pen: integer anchor pixels, kept exactly
+      else pushEdit({ type: 'brush', mode: s.mode, r: r1(s.r), pts: s.pts.map(([x, y]) => [r1(x), r1(y)]) });
     } else if (rect) {
       const d = rect; rect = null; band.hidden = true;
       const p = srcPoint(e);
@@ -478,12 +498,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     get cleaned() { return wantClean() ? cleanCanvas : null; },
     get original() { return src?.canvas || null; },
     get matte() { return matte; },
-    /** For tests: pointer position of a source pixel, in client coordinates. */
-    clientOf(x, y) {
-      const r = canvas.getBoundingClientRect(), f = fitRect(src.w, src.h, S);
-      const cx = (f.x + (x / src.w) * f.w) * view.z + view.x, cy = (f.y + (y / src.h) * f.h) * view.z + view.y;
-      return { x: r.left + (cx / S) * r.width, y: r.top + (cy / S) * r.height };
-    },
+    clientOf,   // (x, y) in image coordinates -> client coordinates (tests)
     async saveAndUse(outPath) { const r = await saveTo(outPath); await useSaved(outPath); close(); return r; }
   };
 }
