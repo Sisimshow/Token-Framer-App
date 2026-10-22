@@ -6,6 +6,7 @@ import { MATTE_RES } from './lib/matte.js';
 import { initCleaner } from './cleaner.js';
 import { initSolver } from './solver.js';
 import { initImageCleaner } from './imgclean.js';
+import { initBgRemover } from './bgremove.js';
 
 const api = window.api;
 const $ = (s, r = document) => r.querySelector(s);
@@ -418,22 +419,27 @@ async function downloadModel() {
   }
 }
 
+/** True when the RMBG-2.0 model is there, asking before the one-time download; false if the user declined. */
+async function ensureAiModel() {
+  const st = await api.getAiStatus();
+  if (st.ready) return true;
+  if (!confirm(`AI remove needs the RMBG-2.0 model: about ${st.sizeMB} MB, downloaded once from Hugging Face.\nLicence CC BY-NC 4.0 (personal, non-commercial use).\n\nDownload it now?`)) return false;
+  await downloadModel();
+  return true;
+}
+
 async function runAi() {
   const it = curItem();
   if (!it || !state.base) return setStatus('Open an image first.', true);
   try {
-    let st = await api.getAiStatus();
-    if (!st.ready) {
-      if (!confirm(`AI remove needs the RMBG-2.0 model: about ${st.sizeMB} MB, downloaded once from Hugging Face.\nLicence CC BY-NC 4.0 (personal, non-commercial use).\n\nDownload it now?`)) return;
-      await downloadModel();
-    }
+    if (!(await ensureAiModel())) return;
     setStatus('Running RMBG-2.0…');
     const matte = await computeMatte(state.base.bitmap);
     if (curItem() !== it) return; // moved to another image meanwhile
     it.matte = matte;
     it.matteVer = (it.matteVer || 0) + 1;
     if (hasAi(it.override)) afterEdit(); else pushEdit({ type: 'ai' });
-    st = await api.getAiStatus();
+    const st = await api.getAiStatus();
     setStatus(`AI cutout done on ${st.provider}. Tweak sensitivity, blur and offset, or fix details with the brush.`);
   } catch (err) {
     setStatus(`AI remove failed: ${err.message}`, true);
@@ -1265,11 +1271,14 @@ function setup() {
   const cleaner = (window.__cleaner = initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }));
   window.__solver = initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf });
   window.__imgclean = initImageCleaner({ api, openImages, dirOf, sepOf, baseOf });
+  window.__bgremove = initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf, computeMatte, ensureAiModel });
   $('#btnCleanImage').onclick = () => { setToolsMenu(false); window.__imgclean.open('clean'); };
   $('#btnUpscaleImage').onclick = () => { setToolsMenu(false); window.__imgclean.open('upscale'); };
   $('#btnCleanFrame').onclick = () => { setToolsMenu(false); cleaner.open(); };
   $('#btnSolveFrame').onclick = () => { setToolsMenu(false); window.__solver.open('frame'); };
   $('#btnSolveImage').onclick = () => { setToolsMenu(false); window.__solver.open('image'); };
+  $('#btnRemoveImage').onclick = () => { setToolsMenu(false); window.__bgremove.open('image'); };
+  $('#btnRemoveFrame').onclick = () => { setToolsMenu(false); window.__bgremove.open('frame'); };
   $('#btnTools').onclick = (e) => { e.stopPropagation(); setToolsMenu($('#toolsMenu').hidden); };
   document.addEventListener('click', (e) => { if (!$('#toolsMenu').hidden && !$('#toolsWrap').contains(e.target)) setToolsMenu(false); });
   $('#btnFrames').onclick = () => { state.ui.framesOpen = !state.ui.framesOpen; applyFramesOpen(); persist(); };
@@ -1337,4 +1346,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, get bgremove() { return window.__bgremove; }, eff, compositeFor, resolveCfg }); // DevTools / tests

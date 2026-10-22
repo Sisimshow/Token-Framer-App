@@ -433,6 +433,78 @@ async function main() {
     check('Clean image mode after upscale lists only the 1x models and has no factor row', switched.mode === 'clean' && switched.rowHidden && switched.models.includes('1x_PureVision') && switched.models.every((m) => /^1x/.test(m)), J(switched));
   }
 
+  // -- Remove background screen: the main window's cutout tools on a screen of their own (AI skipped without the RMBG model)
+  {
+    const srcP = path.join(work, 'Cutout me.png'), outP = path.join(work, 'Cutout me (cutout).png'), frameOutP = path.join(work, 'Cutout frame (cutout).png');
+    fs.rmSync(outP, { force: true }); fs.rmSync(frameOutP, { force: true });
+    const before = await app.ev(`JSON.stringify(__tf.items.map((i) => i.override))`);
+    const r = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms)); const bm = __tf.bgremove;
+      const W = 200, H = 160, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); const d = x.createImageData(W, H);
+      for (let y = 0; y < H; y++) for (let xx = 0; xx < W; xx++) { const i = (y * W + xx) * 4; const disc = Math.hypot(xx - 100, y - 80) < 40; d.data[i] = disc ? 200 : 255; d.data[i + 1] = disc ? 40 : 255; d.data[i + 2] = disc ? 40 : 255; d.data[i + 3] = 255; }
+      const k = (100 * 1 + 80 * W) * 4; d.data[k + 3] = 128;                       // one pixel that already is half transparent
+      x.putImageData(d, 0, 0);
+      await window.api.writeFile(${J(srcP)}, new Uint8Array(await (await new Promise((res) => c.toBlob(res, 'image/png'))).arrayBuffer()));
+      const o = {};
+      q('#btnTools').click(); await wait(80); q('#btnRemoveImage').click(); await wait(200);
+      o.image = { open: !q('#bgremove').hidden, menuClosed: q('#toolsMenu').hidden, mode: bm.mode, title: q('#brTitle').textContent, button: q('#brSaveUse').textContent, saveOff: q('#brSave').disabled };
+      await bm.loadPath(${J(srcP)}); await wait(200);
+      const px = (cv, xx, y) => cv.getContext('2d').getImageData(xx, y, 1, 1).data;
+      o.start = { alphaCorner: px(bm.result, 3, 3)[3], alphaKept: px(bm.result, 100, 80)[3], sameAsOriginal: JSON.stringify([...px(bm.result, 150, 20)]) === JSON.stringify([...px(bm.original, 150, 20)]), saveOn: !q('#brSave').disabled };
+      bm.pushEdit({ type: 'wand', x: 2, y: 2, tol: 30, contiguous: true });
+      o.wand = { corner: px(bm.result, 3, 3)[3], disc: px(bm.result, 70, 80)[3], kept: px(bm.result, 100, 80)[3], edits: bm.edits.length };
+      // the same maths as the main window: buildEditedMask + applyRemovalMask on the original pixels with the same parameters
+      const cr = await import('./lib/colorremoval.js'); const oc = bm.original, id = oc.getContext('2d').getImageData(0, 0, oc.width, oc.height);
+      const { mask, color, fixed } = cr.buildEditedMask(id, bm.params, bm.edits, null); cr.applyRemovalMask(id, mask, color, bm.params.crFeather, bm.params.crGrow, bm.params.crDefringe, fixed);
+      const t = document.createElement('canvas'); t.width = oc.width; t.height = oc.height; t.getContext('2d').putImageData(id, 0, 0);
+      const want = t.getContext('2d').getImageData(0, 0, t.width, t.height).data, got = bm.result.getContext('2d').getImageData(0, 0, t.width, t.height).data;
+      let diff = 0; for (let i = 0; i < want.length; i++) if (want[i] !== got[i]) diff++;
+      o.sameMaths = diff;
+      bm.undo(); o.undone = { corner: px(bm.result, 3, 3)[3], edits: bm.edits.length, redo: bm.redoCount };
+      bm.redo(); o.redone = { corner: px(bm.result, 3, 3)[3], edits: bm.edits.length };
+      bm.pushEdit({ type: 'rect', x0: 90, y0: 70, x1: 110, y1: 90 }); o.rect = { centre: px(bm.result, 100, 80)[3], edits: bm.edits.length };
+      bm.pushEdit({ type: 'brush', mode: 'restore', r: 6, pts: [[100, 80], [105, 85]] }); o.restore = { centre: px(bm.result, 100, 80)[3] };
+      // a real brush stroke through pointer events: erase a patch of the disc
+      bm.setTool('brush'); bm.setParams({ brushSize: 20 });
+      const a = bm.clientOf(60, 80), b = bm.clientOf(70, 80), cv = q('#brPreview');
+      const ev = (type, p) => cv.dispatchEvent(new PointerEvent(type, { clientX: p.x, clientY: p.y, button: 0, pointerId: 7, bubbles: true }));
+      ev('pointerdown', a); ev('pointermove', b); ev('pointerup', b);
+      o.brush = { tool: bm.tool, hit: px(bm.result, 65, 80)[3], far: px(bm.result, 100, 105)[3], last: bm.edits[bm.edits.length - 1].type };
+      // Esc with a tool in hand only puts the tool down; with none it closes the screen. W picks the wand
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(60);
+      o.esc1 = { open: !q('#bgremove').hidden, tool: bm.tool };
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true })); await wait(60); o.keyW = bm.tool;
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true })); await wait(60); o.ctrlZ = bm.edits.length;
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(60);
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await wait(60);
+      o.esc2 = !q('#bgremove').hidden;
+      return o;
+    })()`);
+    check('Remove background: opens from Tools in image mode, loads an image, keeps its own half-transparent pixel, save is off until there is an image', r.image.open && r.image.menuClosed && r.image.mode === 'image' && r.image.title === 'Remove image background' && r.image.button === 'Save and open as image' && r.image.saveOff && r.start.alphaCorner === 255 && r.start.alphaKept === 128 && r.start.sameAsOriginal && r.start.saveOn, J({ image: r.image, start: r.start }));
+    check('Remove background: a wand edit clears the background but not the disc or the half-transparent pixel, and gives exactly the main window\'s maths (buildEditedMask + applyRemovalMask)', r.wand.corner === 0 && r.wand.disc === 255 && r.wand.kept === 128 && r.wand.edits === 1 && r.sameMaths === 0, J({ wand: r.wand, diff: r.sameMaths }));
+    check('Remove background: undo and redo, rectangle erase, brush restore', r.undone.corner === 255 && r.undone.edits === 0 && r.undone.redo === 1 && r.redone.corner === 0 && r.redone.edits === 1 && r.rect.centre === 0 && r.rect.edits === 2 && r.restore.centre > 0, J({ undone: r.undone, redone: r.redone, rect: r.rect, restore: r.restore }));
+    check('Remove background: a real brush stroke (pointer events) erases where it was drawn and records a brush edit', r.brush.tool === 'brush' && r.brush.hit === 0 && r.brush.far === 255 && r.brush.last === 'brush', J(r.brush));
+    check('Remove background: Esc puts the tool down first (the screen stays), W picks the wand, Ctrl+Z undoes, a second Esc closes the screen', r.esc1.open && r.esc1.tool === null && r.keyW === 'wand' && r.ctrlZ === 3 && r.esc2 === false, J({ esc1: r.esc1, keyW: r.keyW, ctrlZ: r.ctrlZ, esc2: r.esc2 }));
+    const mid = await app.ev(`JSON.stringify(__tf.items.map((i) => i.override))`);
+    check('Remove background: the main window per-image edits were not touched by the screen edits', mid === before, J({ before: before.slice(0, 80), mid: mid.slice(0, 80) }));
+    // save: a full-size PNG, then open it as the art image (image mode) or use it as the frame (frame mode)
+    await app.ev(`(async () => { __tf.bgremove.open('image'); await new Promise((res) => setTimeout(res, 100)); })()`);
+    const saved = await app.ev(`__tf.bgremove.saveAndUse(${J(outP)})`);
+    const magic = fs.existsSync(outP) ? fs.readFileSync(outP).subarray(0, 4).toString('hex') : '';
+    const after = await app.ev(`(async () => { const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(outP)})])); const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d'); x.drawImage(bm, 0, 0);
+      const a = (px, py) => x.getImageData(px, py, 1, 1).data[3]; return { w: bm.width, h: bm.height, corner: a(3, 3), items: __tf.items.length, path: __tf.items[0]?.path, closed: document.querySelector('#bgremove').hidden }; })()`);
+    check('Remove background: Save and open as image writes the full-size PNG with transparency and opens it as the art image', magic === '89504e47' && saved.w === 200 && after.w === 200 && after.h === 160 && after.corner === 0 && after.items === 1 && after.path === outP && after.closed, J({ magic, saved: saved.w, after }));
+    const fr = await app.ev(`(async () => { const wait = (ms) => new Promise((res) => setTimeout(res, ms)); const q = (x) => document.querySelector(x);
+      q('#btnTools').click(); await wait(80); q('#btnRemoveFrame').click(); await wait(200);
+      const o = { title: q('#brTitle').textContent, button: q('#brSaveUse').textContent, mode: __tf.bgremove.mode, kept: !!__tf.bgremove.result };
+      const r = await __tf.bgremove.saveAndUse(${J(frameOutP)}); o.w = r.w; o.frame = __tf.frame.path; o.closed = q('#bgremove').hidden; return o; })()`);
+    check('Remove background: the frame entry reopens the same image with a frame title and Save and use as frame, which loads the PNG as the frame', fr.title === 'Remove frame background' && fr.button === 'Save and use as frame' && fr.mode === 'frame' && fr.kept && fr.w === 200 && fr.frame === frameOutP && fr.closed, J(fr));
+    const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
+    if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
+    await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
+    await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art and frame back for the checks that follow
+  }
+
   // -- Auto center anchors: top keeps the art's top edge fixed while Scale x changes, bottom keeps the bottom edge, centre the middle
   const anc = await app.ev(`(() => { const T = window.__tf; const base = { width: 300, height: 600 }; const cfg = T.eff();
     const edge = (a, m) => { const r = T.resolveCfg({ ...cfg, fitEnabled: true, fitAnchor: a, fitScale: m, fitOffsetX: 0, fitOffsetY: 0 }, base); const w = 512 * r.baseScale, h = w * 2; const y = 256 - w / 2 + r.baseOffsetY; return { top: y, bottom: y + h, mid: y + h / 2 }; };

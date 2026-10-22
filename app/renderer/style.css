@@ -125,3 +125,7 @@ label.check { display: flex; align-items: center; gap: 6px; }
 .tsReport { color: var(--muted); font-size: 12px; white-space: pre-line; }
 .tsReport .warn { color: var(--warn); }
 #icProcess { flex: 1; }
+.tsPreview.tool { cursor: crosshair; }
+.tsPreview.panmode { cursor: grab; }
+.brRing { position: absolute; border: 1.5px solid #fff; box-shadow: 0 0 0 1px #000; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+.brBand { position: absolute; border: 1px dashed #fff; background: rgba(106,162,255,.18); pointer-events: none; }

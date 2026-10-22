@@ -57,16 +57,34 @@ export function makeRpc(url, onFatal = () => {}) {
 /**
  * Builds label + control rows from a spec into `host`. `params` is mutated in place; `onChange(key)` fires after every edit.
  * Spec entries: {t:'subhead', label}, {t:'select', k, label, opts:[[value, text]]}, {t:'check', k, label}, or a number {k, label, min, max, step}
- * (range + number box). `show(params)` hides a row, `tip` is its tooltip. Returns {sync()} to refresh every control from `params`.
+ * (range + number box), {t:'tint', k, k2, label} (tick box `k` + colour `k2`, as a #rrggbb string), or {t:'custom', full?, build(ctl)} where `build` fills the
+ * control cell and returns a function that refreshes it (full = no label, the cell spans the row). `show(params)` hides a row, `tip` is its tooltip.
+ * Returns {sync()} to refresh every control from `params`.
  */
 export function buildControls(host, spec, params, onChange) {
   const rows = [];
   for (const c of spec) {
     if (c.t === 'subhead') { host.append(el('div', 'row subhead', c.label)); continue; }
-    const row = el('div', 'row');
+    const row = el('div', c.full ? 'row full' : 'row');
     if (c.tip) row.title = c.tip;
     const ctl = el('div', 'ctl');
-    if (c.t === 'select') {
+    if (c.t === 'custom') {
+      c.sync = c.build(ctl) || (() => {});
+    } else if (c.t === 'tint') {
+      const b = el('input'); b.type = 'checkbox';
+      const col = el('input'); col.type = 'color'; // the native picker has its own eyedropper
+      const hex = el('input'); hex.type = 'text'; hex.maxLength = 7; hex.size = 7; hex.spellcheck = false; hex.placeholder = '#rrggbb';
+      b.addEventListener('change', () => { params[c.k] = b.checked; onChange(c.k); });
+      col.addEventListener('input', () => { params[c.k2] = col.value; onChange(c.k2); });
+      hex.addEventListener('input', () => {
+        let v = hex.value.trim();
+        if (/^[0-9a-f]{6}$/i.test(v)) v = '#' + v;
+        if (/^#[0-9a-f]{6}$/i.test(v)) { params[c.k2] = v.toLowerCase(); onChange(c.k2); }
+      });
+      hex.addEventListener('blur', () => { hex.value = col.value; });
+      ctl.append(b, col, hex);
+      c.sync = () => { b.checked = !!params[c.k]; col.value = params[c.k2]; if (document.activeElement !== hex) hex.value = params[c.k2]; };
+    } else if (c.t === 'select') {
       const s = el('select');
       for (const [v, t] of c.opts) { const o = el('option', null, t); o.value = v; s.append(o); }
       s.addEventListener('change', () => { params[c.k] = s.value; onChange(c.k); });
