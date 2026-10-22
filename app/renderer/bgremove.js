@@ -242,9 +242,9 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
       ctl.append(b, el('span', 'hint', 'Needs a one-time model download'));
       return () => { b.disabled = !src; };
     } },
-    { k: 'aiSensitivity', label: 'Sensitivity', min: 0, max: 1, step: 0.01, show: () => hasAi(), tip: 'How much of the AI matte counts as background. Lower keeps more.' },
-    { k: 'aiBlur', label: 'Mask blur', min: 0, max: 64, step: 1, show: () => hasAi(), tip: 'Softens the edge of the AI mask.' },
-    { k: 'aiOffset', label: 'Mask offset', min: -64, max: 64, step: 1, show: () => hasAi(), tip: 'Shrinks (negative) or grows (positive) the AI mask in pixels.' },
+    { k: 'aiSensitivity', label: 'Sensitivity', min: 0, max: 1, step: 0.01, tip: 'How much of the AI matte counts as background. Lower keeps more.' },
+    { k: 'aiBlur', label: 'Mask blur', min: 0, max: 64, step: 1, tip: 'Softens the edge of the AI mask.' },
+    { k: 'aiOffset', label: 'Mask offset', min: -64, max: 64, step: 1, tip: 'Shrinks (negative) or grows (positive) the AI mask in pixels.' },
     { t: 'subhead', label: 'By color' },
     { t: 'tint', k: 'crEnabled', k2: 'crColor', label: 'Remove color' },
     { k: 'crThreshold', label: 'Threshold', min: 0, max: 100, step: 1, show: (p) => p.crEnabled },
