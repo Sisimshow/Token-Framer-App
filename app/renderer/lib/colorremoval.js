@@ -160,6 +160,34 @@ export function penPixels(pts, n, w, h, put) {
 export function stampPixelStroke(mask, w, h, pts, n, value) { penPixels(pts, n, w, h, (i) => { mask[i] = value; }); }
 
 /**
+ * Pixel-perfect pencil (as in Aseprite), for the 1 px pen. A hand-drawn diagonal crosses pixel corners, so the pointer passes through the side neighbour first
+ * and the line gets an L-shaped extra pixel at every step: it looks 2 px thick. This extends `path` (whole pixels, each next to the last) to `to` along a Bresenham
+ * line and drops every such corner pixel (b, when a-b-c turns a corner and a and c touch diagonally). Returns what changed, so a live view can paint and un-paint.
+ * The finished path is stored as the edit's `pts`: consecutive pixels, so replaying it through penPixels draws exactly those pixels.
+ */
+export function penPathAdd(path, to) {
+  const added = [], removed = [];
+  if (!path.length) { path.push([to[0], to[1]]); added.push(path[0]); return { added, removed }; }
+  let [x, y] = path[path.length - 1];
+  const [qx, qy] = to, dx = Math.abs(qx - x), dy = -Math.abs(qy - y), sx = x < qx ? 1 : -1, sy = y < qy ? 1 : -1;
+  let err = dx + dy;
+  while (x !== qx || y !== qy) {
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x += sx; }
+    if (e2 <= dx) { err += dx; y += sy; }
+    const p = [x, y];
+    path.push(p); added.push(p);
+    const n = path.length;
+    if (n >= 3) {
+      const a = path[n - 3], b = path[n - 2], c = path[n - 1];
+      const corner = Math.abs(a[0] - c[0]) === 1 && Math.abs(a[1] - c[1]) === 1 && ((b[0] === a[0] && b[1] === c[1]) || (b[1] === a[1] && b[0] === c[0]));
+      if (corner) { path.splice(n - 2, 1); removed.push(b); }
+    }
+  }
+  return { added, removed };
+}
+
+/**
  * Build the final removal mask: automatic color mask (when cfg.crEnabled) followed by the manual edits in order.
  * edits: {type:'wand',x,y,tol,contiguous} | {type:'rect',x0,y0,x1,y1} | {type:'brush',mode,r,pts}
  * Returns {mask, color}; `color` is the reference color for defringe.

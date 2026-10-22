@@ -3,7 +3,7 @@
 // screen: local state, zoom/pan, pointer tools and saving. Edits belong to this screen and last until another image is opened (or the app is closed); the main window's
 // per-image edits are never touched. Saved as a full-size PNG (a transparent cutout cannot be a lossy WebP).
 import { DEFAULTS } from './lib/composite.js';
-import { applyRemovalMask, buildEditedMask, penAnchor, penSize, stampPixelStroke, stampStroke } from './lib/colorremoval.js';
+import { applyRemovalMask, buildEditedMask, penAnchor, penPathAdd, penSize, stampPixelStroke, stampStroke } from './lib/colorremoval.js';
 import { DEFAULTS as CF_DEFAULTS } from './lib/cleanframe.js';
 import { buildControls, el, makeRpc } from './ui-kit.js';
 
@@ -275,6 +275,25 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     outCtx.putImageData(id, x0, y0);
     redraw();
   }
+  /** The 1 px pen's pixel-perfect path (penPathAdd): paint the new pixels, put a dropped corner pixel back as it was before the stroke. */
+  function livePenPath(to) {
+    const s = stroke, w = src.w;
+    const before = s.path.length ? s.path[s.path.length - 1] : null;
+    const { added, removed } = penPathAdd(s.path, to);
+    for (const [x, y] of added) {
+      const k = y * w + x, n = s.uses.get(k) || 0;
+      if (!n && !s.prior.has(k) && x >= 0 && y >= 0 && x < w && y < src.h) s.prior.set(k, outCtx.getImageData(x, y, 1, 1));
+      s.uses.set(k, n + 1);
+    }
+    liveBrush(before ? [before, ...added] : added);
+    for (const [x, y] of removed) {
+      const k = y * w + x, n = (s.uses.get(k) || 1) - 1;
+      s.uses.set(k, n);
+      const pr = n ? null : s.prior.get(k);
+      if (pr) { outCtx.putImageData(pr, x, y); if (s.touched) s.touched[k] = 0; }
+    }
+    if (removed.length) redraw();
+  }
 
   const panning = (e) => space || e.button === 1;
   canvas.addEventListener('pointerdown', (e) => {
@@ -288,7 +307,8 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     } else if (tool === 'brush') {
       const pen = penSize(params.brushSize);
       stroke = { r: Math.max(0.5, params.brushSize / 2), pen, mode: params.brushMode, pts: [pen ? penAnchor(p.x, p.y, pen) : [p.x, p.y]], touched: null, downX: e.clientX, downY: e.clientY, moved: false };
-      liveBrush(stroke.pts);
+      if (pen === 1) { Object.assign(stroke, { path: [], uses: new Map(), prior: new Map() }); livePenPath(stroke.pts[0]); }
+      else liveBrush(stroke.pts);
     } else if (tool === 'rect') {
       rect = { x0: p.x, y0: p.y, vx: e.clientX, vy: e.clientY };
     }
@@ -321,7 +341,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
         if (!stroke.moved && Math.hypot(e.clientX - stroke.downX, e.clientY - stroke.downY) < 4) return; // a click is one pixel even if the hand shakes a little while pressing
         stroke.moved = true;
         const a = penAnchor(p.x, p.y, stroke.pen);
-        if (a[0] !== last[0] || a[1] !== last[1]) { stroke.pts.push(a); liveBrush([last, a]); }
+        if (a[0] !== last[0] || a[1] !== last[1]) { stroke.pts.push(a); if (stroke.path) livePenPath(a); else liveBrush([last, a]); }
       } else if (Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, stroke.r / 4)) { stroke.pts.push([p.x, p.y]); liveBrush([last, [p.x, p.y]]); }
     } else if (rect) {
       band.hidden = false;
@@ -335,7 +355,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     if (stroke) {
       const s = stroke; stroke = null;
       const r1 = (v) => Math.round(v * 10) / 10;
-      if (s.pen) pushEdit({ type: 'brush', mode: s.mode, r: s.pen / 2, px: s.pen, pts: s.pts });   // pen: integer anchor pixels, kept exactly
+      if (s.pen) pushEdit({ type: 'brush', mode: s.mode, r: s.pen / 2, px: s.pen, pts: s.path || s.pts });   // pen: integer pixels, kept exactly (1 px: the pixel-perfect path)
       else pushEdit({ type: 'brush', mode: s.mode, r: r1(s.r), pts: s.pts.map(([x, y]) => [r1(x), r1(y)]) });
     } else if (rect) {
       const d = rect; rect = null; band.hidden = true;

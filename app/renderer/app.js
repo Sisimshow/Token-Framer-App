@@ -1,5 +1,5 @@
 import { DEFAULTS, compositeImage, resolvePlacement, baseRect } from './lib/composite.js';
-import { buildEditedMask, applyRemovalMask, stampStroke, stampPixelStroke, penAnchor, penSize } from './lib/colorremoval.js';
+import { buildEditedMask, applyRemovalMask, stampStroke, stampPixelStroke, penAnchor, penSize, penPathAdd } from './lib/colorremoval.js';
 import { detectHole, holeMaskCanvas } from './lib/holedetect.js';
 import { makeZip } from './lib/zip.js';
 import { MATTE_RES } from './lib/matte.js';
@@ -813,6 +813,29 @@ function liveBrush(seg) {
   schedulePreview(0);
 }
 
+/**
+ * The 1 px pen draws a pixel-perfect path (penPathAdd): new pixels are painted as usual, and a corner pixel the path then drops is put back exactly as it was
+ * before the stroke (its mask value and its pixel), unless the path still passes through it elsewhere.
+ */
+function livePenPath(to) {
+  const s = state.stroke, cut = state.cut, w = state.base.bitmap.width;
+  const before = s.path.length ? s.path[s.path.length - 1] : null;
+  const { added, removed } = penPathAdd(s.path, to);
+  for (const [x, y] of added) {
+    const k = y * w + x, n = s.uses.get(k) || 0;
+    if (!n && !s.prior.has(k) && x >= 0 && y >= 0 && x < w && y < state.base.bitmap.height) s.prior.set(k, { raw: cut.raw[k], px: cut.ctx.getImageData(x, y, 1, 1) });
+    s.uses.set(k, n + 1);
+  }
+  liveBrush(before ? [before, ...added] : added);
+  for (const [x, y] of removed) {
+    const k = y * w + x, n = (s.uses.get(k) || 1) - 1;
+    s.uses.set(k, n);
+    const pr = n ? null : s.prior.get(k);
+    if (pr) { cut.raw[k] = pr.raw; cut.ctx.putImageData(pr.px, x, y); if (s.touched) s.touched[k] = 0; }
+  }
+  if (removed.length) schedulePreview(0);
+}
+
 function toolDown(e) {
   const p = srcPoint(e);
   if (!p) return;
@@ -823,7 +846,8 @@ function toolDown(e) {
     const pen = penSize(p.cfg.brushSize);
     state.stroke = { r: Math.max(0.5, p.cfg.brushSize / 2), pen, mode: p.cfg.brushMode, pts: [pen ? penAnchorAt(e, pen) : [p.x, p.y]], touched: null, downX: e.clientX, downY: e.clientY, moved: false };
     previewCut(p.cfg);
-    liveBrush(state.stroke.pts);
+    if (pen === 1) { Object.assign(state.stroke, { path: [], uses: new Map(), prior: new Map() }); livePenPath(state.stroke.pts[0]); }
+    else liveBrush(state.stroke.pts);
   } else if (state.tool === 'rect') {
     state.tdrag = { x0: p.x, y0: p.y, vx: e.clientX, vy: e.clientY };
   }
@@ -861,7 +885,7 @@ function toolMove(e) {
       if (!s.moved && Math.hypot(e.clientX - s.downX, e.clientY - s.downY) < PEN_DEAD_ZONE) return;
       s.moved = true;
       const a = penAnchorAt(e, s.pen);
-      if (a[0] !== last[0] || a[1] !== last[1]) { s.pts.push(a); liveBrush([last, a]); }
+      if (a[0] !== last[0] || a[1] !== last[1]) { s.pts.push(a); if (s.path) livePenPath(a); else liveBrush([last, a]); }
     } else if (p && Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, s.r / 4)) {
       s.pts.push([p.x, p.y]);
       liveBrush([last, [p.x, p.y]]);
@@ -883,7 +907,7 @@ function toolUp(e) {
   if (state.stroke) {
     const s = state.stroke;
     state.stroke = null;
-    if (s.pen) pushEdit({ type: 'brush', mode: s.mode, r: s.pen / 2, px: s.pen, pts: s.pts }); // pen: integer anchor pixels, kept exactly
+    if (s.pen) pushEdit({ type: 'brush', mode: s.mode, r: s.pen / 2, px: s.pen, pts: s.path || s.pts }); // pen: integer pixels, kept exactly (1 px: the pixel-perfect path)
     else pushEdit({ type: 'brush', mode: s.mode, r: Math.round(s.r * 10) / 10, pts: s.pts.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10]) });
   } else if (state.tdrag) {
     const d = state.tdrag;

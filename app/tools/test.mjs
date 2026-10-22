@@ -555,7 +555,7 @@ async function main() {
       return o;
     })()`);
     check('Pixel pen: sizes 1 to 3 switch to pixel mode, the anchor is the pixel under the pointer (3 is centred on it), strokes are gapless Bresenham lines, 2 and 3 px pens are exact blocks', J(pen.size) === J([1, 2, 3, 3, 3, 0, 0]) && J(pen.anchor) === J([[10, 5], [9, 5], [9, 4]]) && pen.line.n === 9 && pen.line.ends && pen.line.connected && pen.block && pen.block3, J({ size: pen.size, anchor: pen.anchor, line: pen.line, block: pen.block }));
-    check('Pixel pen on the screen: a size-1 stroke paints exactly the pixels under the pointer (nothing around them), the ring is a pixel square, size 2 paints a 2x2 block, restore brings back one pixel, same bytes as the shared maths', pen.ringPen && pen.size1.edit.px === 1 && pen.size1.edit.pts === 2 && J(pen.size1.edit.first) === J([50, 40]) && J(pen.size1.edit.last) === J([54, 40]) && J(pen.size1.hit) === J([0, 0, 0, 0, 0]) && J(pen.size1.around) === J([255, 255, 255, 255]) && pen.size2.px === 2 && J(pen.size2.hit) === J([0, 0, 0, 0]) && J(pen.size2.around) === J([255, 255, 255, 255]) && J(pen.restore) === J([0, 255, 0]) && pen.diff === 0, J(pen));
+    check('Pixel pen on the screen: a size-1 stroke paints exactly the pixels under the pointer (nothing around them), the ring is a pixel square, size 2 paints a 2x2 block, restore brings back one pixel, same bytes as the shared maths', pen.ringPen && pen.size1.edit.px === 1 && pen.size1.edit.pts === 5 && J(pen.size1.edit.first) === J([50, 40]) && J(pen.size1.edit.last) === J([54, 40]) && J(pen.size1.hit) === J([0, 0, 0, 0, 0]) && J(pen.size1.around) === J([255, 255, 255, 255]) && pen.size2.px === 2 && J(pen.size2.hit) === J([0, 0, 0, 0]) && J(pen.size2.around) === J([255, 255, 255, 255]) && J(pen.restore) === J([0, 255, 0]) && pen.diff === 0, J(pen));
     // the main window's brush has the same pixel pen
     const mainPen = await app.ev(`(async () => {
       const T = __tf, wait = (ms) => new Promise((res) => setTimeout(res, ms)); const v = document.querySelector('#view'); const o = {};
@@ -655,9 +655,47 @@ async function main() {
         const shaky = await last(); await undoAll();
         rows.push({ step, z: +blk.z.toFixed(2), probes: probes.every(([, , want], i) => got[i] && got[i].length === 1 && got[i][0][0] === want[0] && got[i][0][1] === want[1]), got, shaky, ring: Math.abs(ring.l - blk.l) < 1.01 && Math.abs(ring.t - blk.t) < 1.01 && Math.abs(ring.w - blk.w) < 1.51 });
       }
+      // still at 20x: a staircase drag (right, down, right, down...) erases a clean 1 px diagonal here too (pixel-perfect)
+      {
+        const at = (x, y) => app.ev(`__tf.clientOfSrc(${x}, ${y})`);
+        const p0 = await at(MX - 4 + 0.5, MY - 4 + 0.5);
+        await mouse('mouseMoved', p0.x, p0.y, { buttons: 0 }); await mouse('mousePressed', p0.x, p0.y);
+        for (let i = 0; i < 6; i++) { const a = await at(MX - 3 + i + 0.5, MY - 4 + i + 0.5), b = await at(MX - 3 + i + 0.5, MY - 3 + i + 0.5); await mouse('mouseMoved', a.x, a.y); await mouse('mouseMoved', b.x, b.y); }
+        const e = await at(MX + 2.5, MY + 2.5); await mouse('mouseReleased', e.x, e.y); await sleep(200);
+        const pts = await last(); await undoAll();
+        rows.push({ diagonal: J(pts) === J(Array.from({ length: 7 }, (_, i) => [MX - 4 + i, MY - 4 + i])), pts });
+      }
       await app.ev(`(() => { document.querySelector('#view').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); __tf.setTool('brush'); __tf.shared.brushSize = 40; __tf.ui.showCutout = false; return 1; })()`);
-      const ok = rows.length === 2 && rows.every((r) => r.probes && r.ring && r.shaky && r.shaky.length === 1 && r.shaky[0][0] === MX && r.shaky[0][1] === MY) && rows[1].z === 20;
-      check('Main window pen with real mouse input: zoom reaches 20x; at high zoom the pixel shown under the pointer is the one erased up to its edges (just outside takes the neighbour), a shaky click is one pixel, the square frames the drawn pixel', ok, J(rows));
+      const ok = rows.length === 3 && rows.slice(0, 2).every((r) => r.probes && r.ring && r.shaky && r.shaky.length === 1 && r.shaky[0][0] === MX && r.shaky[0][1] === MY) && rows[1].z === 20 && rows[2].diagonal;
+      check('Main window pen with real mouse input: zoom reaches 20x; at high zoom the pixel shown under the pointer is the one erased up to its edges (just outside takes the neighbour), a shaky click is one pixel, the square frames the drawn pixel, a staircase drag is a clean diagonal', ok, J(rows));
+    }
+    // pixel-perfect 1 px pen: a hand-drawn diagonal passes through side neighbours at every corner (an L, which reads as a 2 px thick line); those corner pixels are dropped
+    {
+      const pp = await app.ev(`(async () => {
+        const cr = await import('./lib/colorremoval.js'); const o = {};
+        const run = (pts) => { const path = []; for (const t of pts) cr.penPathAdd(path, t); return path; };
+        o.stairs = run([[0, 0], [1, 0], [1, 1], [2, 1], [2, 2], [3, 2], [3, 3]]);
+        o.straight = run([[0, 0], [6, 0]]);
+        o.shallow = run([[0, 0], [3, 1]]);
+        const W = 12, m = new Uint8Array(W * W); cr.stampPixelStroke(m, W, W, o.stairs, 1, 1); o.replay = [...m].reduce((n, v) => n + v, 0);
+        return o; })()`);
+      check('Pixel-perfect pen: an L-stepped diagonal becomes a clean 1 px diagonal, straight and shallow lines keep every pixel, and replaying the path draws exactly it', J(pp.stairs) === J([[0, 0], [1, 1], [2, 2], [3, 3]]) && pp.straight.length === 7 && J(pp.shallow) === J([[0, 0], [1, 0], [2, 1], [3, 1]]) && pp.replay === 4, J(pp));
+      // with a REAL mouse on the Remove background screen: a diagonal drag that goes round every pixel corner erases a clean diagonal, nothing beside it
+      await app.ev(`(async () => { __tf.bgremove.open('image'); await new Promise((r) => setTimeout(r, 200)); await __tf.bgremove.loadPath(${J(path.join(work, 'Marker.png'))}); await new Promise((r) => setTimeout(r, 300));
+        __tf.bgremove.setParams({ brushSize: 1, brushMode: 'erase' }); if (__tf.bgremove.tool !== 'brush') __tf.bgremove.setTool('brush'); return 1; })()`);
+      const mouse = (type, x, y, extra = {}) => app.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
+      const c0 = await app.ev(`__tf.bgremove.clientOf(300.5, 300.5)`);
+      for (let i = 0; i < 10; i++) { await app.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: c0.x, y: c0.y, deltaX: 0, deltaY: -100 }); await sleep(40); }
+      const at = (x, y) => app.ev(`__tf.bgremove.clientOf(${x}, ${y})`);
+      let p0 = await at(300.5, 300.5);
+      await mouse('mouseMoved', p0.x, p0.y, { buttons: 0 }); await mouse('mousePressed', p0.x, p0.y);
+      for (let i = 0; i < 8; i++) { const a = await at(301.5 + i, 300.5 + i), b = await at(301.5 + i, 301.5 + i); await mouse('mouseMoved', a.x, a.y); await mouse('mouseMoved', b.x, b.y); }   // right, then down: an L at every step
+      const end = await at(308.5, 308.5); await mouse('mouseReleased', end.x, end.y); await sleep(150);
+      const got = await app.ev(`(() => { const res = __tf.bgremove.result, g = res.getContext('2d').getImageData(295, 295, 20, 20).data, out = [];
+        for (let y = 0; y < 20; y++) for (let x = 0; x < 20; x++) if (g[(y * 20 + x) * 4 + 3] === 0) out.push([295 + x, 295 + y]); return out; })()`);
+      const diag = Array.from({ length: 9 }, (_, i) => [300 + i, 300 + i]);
+      check('Pixel-perfect pen with real mouse input: a diagonal drawn as a staircase of right/down moves erases exactly the 1 px diagonal', J(got) === J(diag), J(got));
+      await app.ev(`(__tf.bgremove.setTool('brush'), __tf.bgremove.close(), 1)`);
     }
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
