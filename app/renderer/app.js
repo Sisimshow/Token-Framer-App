@@ -89,7 +89,7 @@ const SECTIONS = [
     num('baseScale', 'Scale', 0.2, 2.5, 0.01, (c) => !fit(c)),
     ...offs('baseOffset', 'Offset', (c) => !fit(c)),
     { k: 'baseOverFrame', t: 'check', label: 'Art over frame' },
-    { t: 'subhead', label: 'Send to tool', note: 'opens the original file; save there, then load it back' },
+    { t: 'subhead', label: 'Send to tool', note: 'opens the original file' },
     { t: 'sendtools', target: 'image', label: '' }
   ] },
   { title: 'Mask', open: true, controls: [
@@ -106,7 +106,7 @@ const SECTIONS = [
     ...offs('frameOffset', 'Offset'),
     num('frameOpacity', 'Opacity', 0, 1, 0.01),
     { k: 'frameTintOn', k2: 'frameTintColor', t: 'tint', label: 'Tint' },
-    { t: 'subhead', label: 'Send to tool', note: 'opens the original file; save there, then use it as the frame' },
+    { t: 'subhead', label: 'Send to tool', note: 'opens the original file' },
     { t: 'sendtools', target: 'frame', label: '' }
   ] },
   { title: 'Overlay', controls: [
@@ -164,19 +164,18 @@ const SECTIONS = [
 const ctls = [];
 
 /**
- * "Send to tool": the tool screens that take one image, each opened with a file already loaded. Solve (needs a white AND a black render of the same picture) is not offered.
+ * "Send to tool": the tool screens that take one image, each opened with a file already loaded. Not offered: Solve (needs a white AND a black render of the same picture) and Remove background
+ * (the main window already has those tools).
  * Each entry: [label, tooltip, (path) => open the tool with it]. The tools open the ORIGINAL file, not the framed or cut-out preview.
  */
 const SEND_TOOLS = {
   image: [
     ['Upscale image', 'Enlarge this image with an upscaling model', async (p) => { await window.__imgclean.open('upscale'); await window.__imgclean.loadPath(p); }],
     ['Extend edges', 'Add canvas around this image and fill it from the picture itself', async (p) => { window.__extend.open(); await window.__extend.loadPath(p); }],
-    ['Clean image', 'Remove compression noise from this image', async (p) => { await window.__imgclean.open('clean'); await window.__imgclean.loadPath(p); }],
-    ['Remove background', 'Cut the background out of this image on a screen of its own', async (p) => { window.__bgremove.open('image'); await window.__bgremove.loadPath(p); }]
+    ['Clean image', 'Remove compression noise from this image', async (p) => { await window.__imgclean.open('clean'); await window.__imgclean.loadPath(p); }]
   ],
   frame: [
-    ['Clean frame', 'Refine this frame\'s edges, trim it and resize it', async (p) => { window.__cleaner.open(); await window.__cleaner.loadPath(p); }],
-    ['Remove background', 'Cut the background out of this frame on a screen of its own', async (p) => { window.__bgremove.open('frame'); await window.__bgremove.loadPath(p); }]
+    ['Clean frame', 'Refine this frame\'s edges, trim it and resize it', async (p) => { window.__cleaner.open(); await window.__cleaner.loadPath(p); }]
   ]
 };
 

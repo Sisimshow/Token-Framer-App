@@ -911,7 +911,7 @@ async function main() {
       o.frame = [...grid('Frame').querySelectorAll('.toolgrid button')].map((b) => b.textContent + (b.disabled ? '!' : ''));
       const closeAll = () => { for (const id of ['#imgclean', '#extend', '#bgremove', '#cleaner']) q(id).hidden = true; };
       const art = ${J(path.basename(art))};
-      const cases = [['Image', 'Upscale image', '#imgclean', '#icName', '#icTitle'], ['Image', 'Extend edges', '#extend', '#exName', null], ['Image', 'Clean image', '#imgclean', '#icName', '#icTitle'], ['Image', 'Remove background', '#bgremove', '#brName', '#brTitle']];
+      const cases = [['Image', 'Upscale image', '#imgclean', '#icName', '#icTitle'], ['Image', 'Extend edges', '#extend', '#exName', null], ['Image', 'Clean image', '#imgclean', '#icName', '#icTitle']];
       o.sent = [];
       for (const [sec, text, screen, nameEl, titleEl] of cases) {
         closeAll(); btn(sec, text).click();
@@ -922,16 +922,15 @@ async function main() {
       // a frame goes to the frame tools
       const frameName = __tf.frame.name;
       o.frameSent = [];
-      for (const [text, screen, nameEl] of [['Clean frame', '#cleaner', '#cfName'], ['Remove background', '#bgremove', '#brName']]) {
+      for (const [text, screen, nameEl] of [['Clean frame', '#cleaner', '#cfName']]) {
         closeAll(); btn('Frame', text).click();
         for (let i = 0; i < 60 && !(q(nameEl).textContent === frameName); i++) await wait(100);
         o.frameSent.push({ text, open: !q(screen).hidden, name: q(nameEl).textContent, expect: frameName });
       }
-      o.bgFrameMode = q('#brTitle').textContent;
       closeAll(); o.art = art;
       return o;
     })()`);
-    check('Send to tool: the Image section offers Upscale, Extend edges, Clean and Remove background (no Solve), the Frame section Clean frame and Remove background; each opens its tool with the current file loaded', J(send.image) === J(['Upscale image', 'Extend edges', 'Clean image', 'Remove background']) && J(send.frame) === J(['Clean frame', 'Remove background']) && send.sent.every((s) => s.open && s.name === send.art) && /pscale/.test(send.sent[0].title) && /lean/.test(send.sent[2].title) && send.frameSent.every((s) => s.open && s.name.startsWith(s.expect)) && /rame/.test(send.bgFrameMode), J(send));
+    check('Send to tool: the Image section offers Upscale, Extend edges and Clean image, the Frame section Clean frame (no Solve, no Remove background: the main window has those); each opens its tool with the current file loaded', J(send.image) === J(['Upscale image', 'Extend edges', 'Clean image']) && J(send.frame) === J(['Clean frame']) && send.sent.every((s) => s.open && s.name === send.art) && /pscale/.test(send.sent[0].title) && /lean/.test(send.sent[2].title) && send.frameSent.every((s) => s.open && s.name.startsWith(s.expect)), J(send));
 
   }
 

@@ -50,11 +50,11 @@ Personal-use project, largely AI-written.
   (no doubled line at the seam), *Smear* repeats the edge pixels, *Patch fill* is a content-aware fill that copies matching patches from near the edge so textures and backgrounds carry on, and *Transparent*
   adds empty canvas. A blur that grows with the distance from the picture keeps a mirror/smear fill a calm wash rather than a hard echo. Images with transparency work (except Patch fill, which needs an opaque
   image). The preview follows the controls live; a result bigger than about 1200 px is previewed at reduced size and **Process** builds the full image (needed before saving). Patch fill is slow (about
-  40 s for a 2048 px image with 15% added on every side) and only runs when you press Process, with a progress bar and **Cancel**; until then the preview is a rough placeholder. Where the picture is
+  40 s for a 2048 px image with 15% added on every side) and only runs when you press Process, with a progress bar and **Cancel**; until then the preview shows only the layout (the picture where it will sit, the new border hatched). Where the picture is
   cut off by its edge (a figure running out of the frame) a fill can only smear it on, never continue it. *Variation* gives another fill. Patch fill is the default (switch to Mirror or Smear for an instant result, or for an image with transparency). Saved as a PNG (`<name> (extended).png`).
-- **Send to tool:** the **Image** and **Frame** sections of the right-hand panel end with a *Send to tool* row of buttons that open the current image (or frame) in Upscale image, Extend edges, Clean image or Remove
-  background (Clean frame / Remove background for a frame) with the file already loaded. The tool gets the original file, not the framed or cut-out preview. Save there, then **Save and open as image** (or *use as frame*) brings
-  the result back. Solve is not offered: it needs a white and a black render of the same picture.
+- **Send to tool:** the **Image** and **Frame** sections of the right-hand panel end with a *Send to tool* row of buttons that open the current image (or frame) in Upscale image, Extend edges or Clean image
+  (Clean frame for a frame) with the file already loaded. The tool gets the original file, not the framed or cut-out preview. Save there, then **Save and open as image** (or *use as frame*) brings
+  the result back. Solve is not offered (it needs a white and a black render of the same picture), nor is Remove background (the main window has those tools).
 - **Converted image models** (used by Clean image, Upscale image and the solvers' pre-clean) live in `app/models/`: three at the moment, 1x_PureVision,
   4x-UltraMix_Smooth and 4x-UltraSharpV2. The large `.onnx` files are not tracked by git; each comes with a small `<name>.json` (scale and size rules) that is tracked and must stay
   next to its `.onnx`. Recreate one with ComfyUI's Python (ComfyUI need not be running):

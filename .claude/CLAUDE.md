@@ -69,12 +69,13 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   (`Variation`), RGB only (an image with transparency is refused). The first guess is a plain edge smear; the coarsest pyramid level smooths it by diffusion and finds matches against that before the first vote (a mirror first guess
   copied structure such as a hat into the border; a blurred full-size smear cost 12 s for nothing). Source patches come only from a BAND next to the edge being filled (`band` 0.12 of the short side, per side of the target pixel) and
   must lie wholly inside the original; known pixels weigh `knownWeight` 6 in the patch distance so the fill stays continuous with the picture (4 left a visible seam). Needs Process (progress bar, Cancel = `makeRpc().cancel()`,
-  which terminates the worker quietly); the live preview in this mode is a placeholder (a softened smear) that cannot be saved. Cost measured on 2048 px art with 15% padding: about 37 s (7 Mpx result). Known limit: where the
+  which terminates the worker quietly); the live preview in this mode is a LAYOUT placeholder built on the main thread (picture in place, new border hatched, `placeholder: true`, never saveable): an earlier smear placeholder looked
+  like a result and then did not match it. Mirror/Smear previews are the same algorithm on a shrunk copy, so they stay close to the full result. Cost measured on 2048 px art with 15% padding: about 37 s (7 Mpx result). Known limit: where the
   subject is cut off by the picture's edge the fill can only smear it on. Pen-and-paper estimates, not measured on big inputs: memory is about 50 bytes per output pixel in the worker, so Patch fill has its own lower cap
   (`PATCH_MAX_PIXELS`) and a time warning.
   `ui-kit.makeRpc` gained `ask(msg, transfer, onProgress)` (worker `{type:'progress'}` messages) and `cancel()` (rejects pending requests with an error whose `cancelled` is true, no `onFatal`).
   Possible later: a LaMa/MI-GAN ONNX mode (feed-forward inpainting nets, 512 px fixed; both trained for holes, not borders).
-- "Send to tool" (end of the Image and Frame panel sections, control type `sendtools`, `SEND_TOOLS` in `app.js`): one button per single-image tool that opens it with `curItem().path` (Image) or `state.frame.path` (Frame) already loaded
+- "Send to tool" (end of the Image and Frame panel sections, control type `sendtools`, `SEND_TOOLS` in `app.js`): one button per single-image tool (Upscale, Extend edges, Clean image / Clean frame; Remove background is left out because the main window has it) that opens it with `curItem().path` (Image) or `state.frame.path` (Frame) already loaded
   through the tool's `loadPath`. It sends the ORIGINAL file (no framing/cutout edits, nothing from `override`); disabled for a pasted image (no path). Solve is deliberately not offered (needs two renders).
   Nothing is returned automatically: the tools' own "Save and open as image / use as frame" does that. Add a new tool by adding an entry (it needs `open()` and `loadPath(path)`).
 - `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).

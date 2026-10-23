@@ -1,7 +1,7 @@
 // "Extend edges" tool: pads an image with more canvas and fills the new border from the picture itself (mirror, edge smear softened with distance, or a
 // content-aware patch fill) instead of a flat colour. Unlike the model tools it accepts images with transparency (except Patch fill, which is RGB only).
 // The maths is lib/extendedges.js and lib/patchfill.js, run by lib/extendedges.worker.js. Patch fill is slow: it runs only when Process is pressed, with a
-// progress bar and Cancel; until then the preview shows a rough placeholder.
+// progress bar and Cancel; until then the preview shows only the layout (the picture where it will sit, the new border hatched), never a fake fill.
 // The preview is live: a result up to PREVIEW_MAX px on its longest side is the real thing; a bigger one is previewed at reduced size and the full image
 // is built when Process is pressed (it asks first when very large). Saving needs the full image.
 import { fitRect } from './lib/cleanframe.js';
@@ -82,7 +82,7 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
       ctx.strokeStyle = '#000000'; ctx.setLineDash([4 / view.z, 4 / view.z]); ctx.strokeRect(f.x + b.x * k, f.y + b.y * k, b.w * k, b.h * k); ctx.setLineDash([]);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const shown = img !== result?.canvas ? '' : result.placeholder ? ' · placeholder, press Process' : !result.full ? ' · preview' : '';
+    const shown = img !== result?.canvas ? '' : result.placeholder ? ' · layout only, press Process' : !result.full ? ' · preview' : '';
     $('#exBadge').textContent = `${img.width}×${img.height}${shown}${busy ? ' · working…' : ''}${view.z > 1 ? ` · ${Math.round(view.z * 100)}%` : ''}`;
   }
   const resetView = () => { view.z = 1; view.x = 0; view.y = 0; redraw(); };
@@ -189,16 +189,29 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
       }
       return;
     }
-    // live preview (and Process for the other modes). Patch fill shows a rough placeholder (a softened edge smear) until Process.
+    if (isPatch) { // Patch fill is slow, so it is not previewed: show where the picture will sit in the new canvas, the border hatched, and wait for Process
+      const k = previewScale(), cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+      const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+      const g = c.getContext('2d'), inner = { x: Math.round(p.left * k), y: Math.round(p.top * k), w: Math.max(1, Math.round(job.w * k)), h: Math.max(1, Math.round(job.h * k)) };
+      g.fillStyle = '#2b2b2b'; g.fillRect(0, 0, cw, ch);
+      g.strokeStyle = '#4a4a4a'; g.lineWidth = 2; g.beginPath();
+      for (let d = -ch; d < cw; d += 14) { g.moveTo(d, ch); g.lineTo(d + ch, 0); }
+      g.stroke();
+      g.imageSmoothingQuality = 'high'; g.drawImage(job.canvas, inner.x, inner.y, inner.w, inner.h);
+      result = { canvas: c, key, w, h, full: false, inner, placeholder: true };
+      setMsg('Patch fill is made when you press Process (it can take a while). The hatched area is where the new border will go.');
+      refreshButtons(); redraw();
+      return;
+    }
+    // live preview (and Process for the other modes): the real fill, at reduced size when the result is big
     const scale = manual ? 1 : previewScale();
     busy = true; refreshButtons(); redraw();
     try {
       setMsg(scale < 1 ? 'Updating the preview…' : 'Filling…');
-      const out = await ask({ type: 'extend', params: isPatch ? { ...params, ...p, mode: 'smear', blur: 0.4 } : { ...params, ...p }, scale });
+      const out = await ask({ type: 'extend', params: { ...params, ...p }, scale });
       if (job !== src || req !== runReq) return;
-      result = { canvas: toCanvas(out.rgba, out.w, out.h), key, w, h, full: out.scale === 1 && !isPatch, inner: out.inner, placeholder: isPatch };
-      setMsg(isPatch ? `Patch fill is not computed yet: this is a rough placeholder. Press Process to run it (it can take a while).`
-        : result.full ? `${job.w}×${job.h} → ${w}×${h}. Scroll to zoom, drag to pan, double-click to reset.` : `Preview at reduced size (${out.w}×${out.h}). Press Process to build the full ${w}×${h} image, then save.`);
+      result = { canvas: toCanvas(out.rgba, out.w, out.h), key, w, h, full: out.scale === 1, inner: out.inner };
+      setMsg(result.full ? `${job.w}×${job.h} → ${w}×${h}. Scroll to zoom, drag to pan, double-click to reset.` : `Preview at reduced size (${out.w}×${out.h}). Press Process to build the full ${w}×${h} image, then save.`);
     } catch (err) {
       if (req === runReq) setMsg(`Could not extend the image: ${err.message}`, true);
     } finally {
