@@ -1,9 +1,10 @@
 // "Extend edges" tool: pads an image with more canvas and fills the new border from the picture itself (mirror or edge smear, softened with distance),
 // instead of a flat colour. Unlike the model tools it accepts images with transparency. The maths is lib/extendedges.js, run by lib/extendedges.worker.js.
-// The preview is live while the result is small; a very large result waits for the Process button (and asks first).
+// The preview is live: a result up to PREVIEW_MAX px on its longest side is the real thing; a bigger one is previewed at reduced size and the full image
+// is built when Process is pressed (it asks first when very large). Saving needs the full image.
 import { fitRect } from './lib/cleanframe.js';
-import { EXTEND_DEFAULTS, MAX_EXTEND_PIXELS, squarePadding } from './lib/extendedges.js';
-import { buildControls, confirmHeavy, el, HEAVY_PIXELS, makeRpc } from './ui-kit.js';
+import { EXTEND_DEFAULTS, MAX_EXTEND_PIXELS, PREVIEW_MAX, squarePadding } from './lib/extendedges.js';
+import { buildControls, confirmHeavy, el, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const SIDES = ['top', 'right', 'bottom', 'left'];
@@ -39,8 +40,10 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
   const hasPad = () => { const p = pad(); return SIDES.some((k) => p[k] > 0); };
   const keyOf = () => JSON.stringify([pad(), params.mode, params.mode === 'transparent' ? 0 : params.blur]);
   const fresh = () => !!result && result.key === keyOf();
-  /** A result small enough to follow the controls live; bigger ones wait for Process. */
-  const live = () => { const s = outSize(); return s.w * s.h <= HEAVY_PIXELS; };
+  /** The result is current AND full size (a reduced preview is not enough to save). */
+  const saveable = () => fresh() && result.full;
+  /** How much smaller than full size the live preview is made (1 = the real image). */
+  const previewScale = () => { const s = outSize(); return Math.min(1, PREVIEW_MAX / Math.max(s.w, s.h, 1)); };
 
   // ---------------------------------------------------------------- drawing
   function redraw() {
@@ -54,13 +57,14 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, f.x, f.y, f.w, f.h);
     if (params.showBounds && img === result?.canvas) {
-      const p = result.pad, k = f.w / img.width;
+      const b = result.inner, k = f.w / img.width;
       ctx.lineWidth = 1.5 / view.z;
-      ctx.strokeStyle = '#ffffff'; ctx.strokeRect(f.x + p.left * k, f.y + p.top * k, src.w * k, src.h * k);
-      ctx.strokeStyle = '#000000'; ctx.setLineDash([4 / view.z, 4 / view.z]); ctx.strokeRect(f.x + p.left * k, f.y + p.top * k, src.w * k, src.h * k); ctx.setLineDash([]);
+      ctx.strokeStyle = '#ffffff'; ctx.strokeRect(f.x + b.x * k, f.y + b.y * k, b.w * k, b.h * k);
+      ctx.strokeStyle = '#000000'; ctx.setLineDash([4 / view.z, 4 / view.z]); ctx.strokeRect(f.x + b.x * k, f.y + b.y * k, b.w * k, b.h * k); ctx.setLineDash([]);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    $('#exBadge').textContent = `${img.width}×${img.height}${busy ? ' · working…' : ''}${view.z > 1 ? ` · ${Math.round(view.z * 100)}%` : ''}`;
+    const shown = img === result?.canvas && !result.full ? ' · preview' : '';
+    $('#exBadge').textContent = `${img.width}×${img.height}${shown}${busy ? ' · working…' : ''}${view.z > 1 ? ` · ${Math.round(view.z * 100)}%` : ''}`;
   }
   const resetView = () => { view.z = 1; view.x = 0; view.y = 0; redraw(); };
   const toCanvasPoint = (e) => { const r = canvas.getBoundingClientRect(); return { x: ((e.clientX - r.left) / r.width) * S, y: ((e.clientY - r.top) / r.height) * S }; };
@@ -116,10 +120,13 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
 
   // ---------------------------------------------------------------- filling
   function refreshButtons() {
-    $('#exProcess').disabled = busy || !src || !hasPad() || fresh();
-    $('#exSave').disabled = $('#exSaveOpen').disabled = busy || !src || !hasPad() || !fresh();
+    $('#exProcess').disabled = busy || !src || !hasPad() || saveable();
+    $('#exSave').disabled = $('#exSaveOpen').disabled = busy || !src || !hasPad() || !saveable();
   }
-  /** The padded picture for the current controls (live preview; the worker answers requests in order, a superseded answer is dropped). */
+  /**
+   * The padded picture for the current controls. The live preview (manual = false) is the real image when it is small, otherwise a reduced copy;
+   * Process (manual = true) always builds the full image. The worker answers requests in order; a superseded answer is dropped.
+   */
   async function run(manual = false) {
     const job = src;
     clearTimeout(timer); timer = 0;
@@ -127,14 +134,15 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
     const { w, h } = outSize(), key = keyOf(), p = pad();
     if (w * h > MAX_EXTEND_PIXELS) { setMsg(`That would be ${w}×${h} (${(w * h / 1e6).toFixed(0)} megapixels), more than the ${MAX_EXTEND_PIXELS / 1e6} megapixel limit.`, true); return; }
     if (manual && !confirmHeavy(w, h, 'Extending the edges')) { setMsg('Cancelled.'); return; }
+    const scale = manual ? 1 : previewScale();
     const req = ++runReq;
     busy = true; refreshButtons(); redraw();
     try {
-      setMsg('Filling…');
-      const out = await rpc.ask({ type: 'extend', params: { ...params, ...p } });
+      setMsg(scale < 1 ? 'Updating the preview…' : 'Filling…');
+      const out = await rpc.ask({ type: 'extend', params: { ...params, ...p }, scale });
       if (job !== src || req !== runReq) return;
-      result = { canvas: toCanvas(out.rgba, out.w, out.h), key, w: out.w, h: out.h, pad: p };
-      setMsg(`${job.w}×${job.h} → ${out.w}×${out.h}. Scroll to zoom, drag to pan, double-click to reset.`);
+      result = { canvas: toCanvas(out.rgba, out.w, out.h), key, w, h, full: out.scale === 1, inner: out.inner };
+      setMsg(result.full ? `${job.w}×${job.h} → ${w}×${h}. Scroll to zoom, drag to pan, double-click to reset.` : `Preview at reduced size (${out.w}×${out.h}). Press Process to build the full ${w}×${h} image, then save.`);
     } catch (err) {
       if (req === runReq) setMsg(`Could not extend the image: ${err.message}`, true);
     } finally {
@@ -142,16 +150,15 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
       refreshButtons(); redraw();
     }
   }
-  /** After any change: follow it live when the result is small, otherwise say that Process is needed. */
+  /** After any change: update the (possibly reduced-size) live preview shortly. */
   function schedule() {
     clearTimeout(timer); timer = 0;
     refreshButtons(); redraw();
     if (!src) return;
     if (!hasPad()) { setMsg(`${src.w}×${src.h}. Set how much to add on each side, or use Pad to square.`); return; }
-    if (!live()) { const { w, h } = outSize(); setMsg(`${w}×${h} (${(w * h / 1e6).toFixed(0)} megapixels) is too large to follow live. Press Process.`); return; }
     timer = setTimeout(run, 150);
   }
-  const refresh = async () => { schedule(); if (timer) { clearTimeout(timer); await run(); } };
+  const refresh = async () => { schedule(); if (timer) { clearTimeout(timer); timer = 0; await run(); } };
 
   function changed(k) {
     if (params.link && SIDES.includes(k)) for (const s of SIDES) params[s] = params[k];
@@ -169,7 +176,7 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
 
   // ---------------------------------------------------------------- saving
   async function saveTo(outPath) {
-    if (!fresh() || !hasPad()) throw new Error('Extend the image first');
+    if (!saveable() || !hasPad()) throw new Error('Press Process to build the full-size image first');
     const blob = await new Promise((res, rej) => result.canvas.toBlob((b) => (b ? res(b) : rej(new Error('PNG encode failed'))), 'image/png'));
     const bytes = new Uint8Array(await blob.arrayBuffer());
     await api.writeFile(outPath, bytes);
@@ -180,7 +187,7 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
     return src?.path ? `${dirOf(src.path)}${sepOf(src.path)}${name}` : name;
   }
   async function saveClicked(andOpen) {
-    if (!fresh()) return;
+    if (!saveable()) return;
     let out = await api.pickSave(defaultName(), 'png');
     if (!out) return;
     if (!/\.png$/i.test(out)) out += '.png';
@@ -228,6 +235,8 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
     get result() { return result?.canvas || null; },
     get source() { return src?.canvas || null; },
     get fresh() { return fresh(); },
+    get full() { return !!result?.full; },
+    get busy() { return busy; },
     /** For tests: save to a known path, then do what "Save and open as image" does. */
     async saveAndOpen(outPath) { const r = await saveTo(outPath); await openImages([outPath]); close(); return r; }
   };

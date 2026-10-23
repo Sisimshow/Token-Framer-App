@@ -389,7 +389,32 @@ async function main() {
     const magic = fs.existsSync(exP) ? fs.readFileSync(exP).subarray(0, 4).toString('hex') : '';
     const after = await app.ev(`({ items: __tf.items.length, path: __tf.items[0]?.path, closed: document.querySelector('#extend').hidden })`);
     check('Extend edges: Save and open as image writes a PNG of the padded size and opens it in the main window', magic === '89504e47' && saved.w === 440 && saved.h === 340 && after.items === 1 && after.path === exP && after.closed, J({ magic, saved, after }));
-    await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art back for the checks that follow
+    // a big result is previewed at reduced size and only Process builds (and lets you save) the full image
+    const bigP = path.join(work, 'Big.png'), bigOut = path.join(work, 'Big (extended).png');
+    fs.rmSync(bigOut, { force: true });
+    const bg = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms)); const o = {};
+      const c = document.createElement('canvas'); c.width = 2400; c.height = 1800; const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 2400, 1800); g.addColorStop(0, '#cc3333'); g.addColorStop(1, '#3366cc'); x.fillStyle = g; x.fillRect(0, 0, 2400, 1800);
+      await window.api.writeFile(${J(bigP)}, new Uint8Array(await (await new Promise((res) => c.toBlob(res, 'image/png'))).arrayBuffer()));
+      q('#btnTools').click(); await wait(80); q('#btnExtendImage').click(); await wait(300);
+      await __tf.extend.loadPath(${J(bigP)});
+      __tf.extend.padToSquare();
+      const t0 = performance.now();
+      for (let i = 0; i < 100 && !(__tf.extend.fresh && !__tf.extend.busy); i++) await wait(100);
+      const rc = __tf.extend.result;
+      o.preview = { w: rc?.width, h: rc?.height, full: __tf.extend.full, saveOff: q('#exSave').disabled, processOn: !q('#exProcess').disabled, ms: Math.round(performance.now() - t0), msg: q('#exMsg').textContent.slice(0, 40) };
+      await __tf.extend.process();
+      const fc = __tf.extend.result;
+      o.full = { w: fc?.width, h: fc?.height, full: __tf.extend.full, saveOn: !q('#exSave').disabled, processOff: q('#exProcess').disabled };
+      await __tf.extend.setParams({ top: 310 });
+      o.edited = { full: __tf.extend.full, saveOff: q('#exSave').disabled, processOn: !q('#exProcess').disabled };
+      await __tf.extend.setParams({ top: 300 }); await __tf.extend.process();
+      return o;
+    })()`);
+    check('Extend edges: a big result is previewed at reduced size (Save off, Process on); Process builds the full image and enables saving; changing a control goes back to the preview', bg.preview.w === 1200 && bg.preview.h === 1200 && !bg.preview.full && bg.preview.saveOff && bg.preview.processOn && bg.full.w === 2400 && bg.full.h === 2400 && bg.full.full && bg.full.saveOn && bg.full.processOff && !bg.edited.full && bg.edited.saveOff && bg.edited.processOn, J(bg));
+    const bigSaved = await app.ev(`__tf.extend.saveTo(${J(bigOut)})`);
+    check('Extend edges: saving after Process writes the full-size PNG', bigSaved.w === 2400 && bigSaved.h === 2400 && fs.existsSync(bigOut), J(bigSaved));
+    await app.ev(`(__tf.extend.close(), __tf.openImages([${J(art)}]))`); await sleep(600); // put the shared test art back for the checks that follow
   }
 
   // -- Clean image screen: the real model through the main process (skipped when app/models/1x_PureVision.onnx is not there, e.g. a fresh clone)

@@ -5,6 +5,9 @@
 
 export const EXTEND_DEFAULTS = { top: 0, right: 0, bottom: 0, left: 0, link: false, mode: 'mirror', blur: 0.25, showBounds: true };
 
+/** The live preview of a big result is made at this size (longest side, pixels); the full-size image is made when Process is pressed. */
+export const PREVIEW_MAX = 1200;
+
 /** Largest output, in pixels (the same cap the model tools use). */
 export const MAX_EXTEND_PIXELS = 100e6;
 
