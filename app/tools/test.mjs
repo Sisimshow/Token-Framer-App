@@ -389,6 +389,97 @@ async function main() {
     const magic = fs.existsSync(exP) ? fs.readFileSync(exP).subarray(0, 4).toString('hex') : '';
     const after = await app.ev(`({ items: __tf.items.length, path: __tf.items[0]?.path, closed: document.querySelector('#extend').hidden })`);
     check('Extend edges: Save and open as image writes a PNG of the padded size and opens it in the main window', magic === '89504e47' && saved.w === 440 && saved.h === 340 && after.items === 1 && after.path === exP && after.closed, J({ magic, saved, after }));
+    // Patch fill: the content-aware maths (pure), then the screen (placeholder until Process, progress/cancel, opaque images only)
+    const pm = await app.ev(`(async () => {
+      const pf = await import('./lib/patchfill.js'), ee = await import('./lib/extendedges.js'); const o = {};
+      const g = (x, y, c) => 128 + 90 * Math.sin(2 * Math.PI * (x + 2 * y) / 10 + c * 2);
+      const mk = (w, h, ox = 0, oy = 0) => { const a = new Uint8ClampedArray(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; for (let c = 0; c < 3; c++) a[i + c] = g(x + ox, y + oy, c); a[i + 3] = 255; } return a; };
+      const W0 = 80, H0 = 80, P = 24, tex = mk(W0, H0);
+      const init = ee.extendEdges(tex, W0, H0, { left: P, right: P, top: P, bottom: P, mode: 'smear', blur: 0 });
+      const run = () => pf.patchFill(init.rgba, init.w, init.h, { x: P, y: P, w: W0, h: H0 }, { patch: 7, iterations: 4, band: 0.5, seed: 1 });
+      const out = run(), again = run(), ref = mk(init.w, init.h, -P, -P);
+      let err = 0, base = 0, n = 0, centre = true, opaque = true;
+      for (let y = 0; y < init.h; y++) for (let x = 0; x < init.w; x++) {
+        const i = (y * init.w + x) * 4; if (out[i + 3] !== 255) opaque = false;
+        if (x >= P && x < P + W0 && y >= P && y < P + H0) { for (let c = 0; c < 4; c++) if (out[i + c] !== tex[((y - P) * W0 + x - P) * 4 + c]) centre = false; continue; }
+        for (let c = 0; c < 3; c++) { err += Math.abs(out[i + c] - ref[i + c]); base += Math.abs(init.rgba[i + c] - ref[i + c]); n++; }
+      }
+      o.texture = { err: +(err / n).toFixed(2), smearErr: +(base / n).toFixed(2), centre, opaque, deterministic: out.every((v, i) => v === again[i]) };
+      // a marker deep inside the picture (outside the source band) never turns up in the border
+      const w = 100, h = 100, a = new Uint8ClampedArray(w * h * 4); for (let i = 0; i < w * h; i++) { a[i * 4] = 60 + (i % w); a[i * 4 + 1] = 90 + ((i / w) | 0); a[i * 4 + 2] = 120; a[i * 4 + 3] = 255; }
+      for (let y = 45; y < 55; y++) for (let x = 45; x < 55; x++) { const i = (y * w + x) * 4; a[i] = 255; a[i + 1] = 0; a[i + 2] = 255; }
+      const ini = ee.extendEdges(a, w, h, { left: 30, right: 30, top: 30, bottom: 30, mode: 'smear', blur: 0 });
+      const o3 = pf.patchFill(ini.rgba, ini.w, ini.h, { x: 30, y: 30, w, h }, { patch: 7, iterations: 3, band: 0.15, seed: 2 });
+      let mag = 0; for (let y = 0; y < ini.h; y++) for (let x = 0; x < ini.w; x++) { if (x >= 30 && x < 130 && y >= 30 && y < 130) continue; const i = (y * ini.w + x) * 4; if (o3[i] > 150 && o3[i + 1] < 100 && o3[i + 2] > 150) mag++; }
+      o.marker = mag;
+      try { const s = new Uint8ClampedArray(8 * 8 * 4).fill(255); const si = ee.extendEdges(s, 8, 8, { left: 5, right: 5, top: 5, bottom: 5, mode: 'smear', blur: 0 }); pf.patchFill(si.rgba, si.w, si.h, { x: 5, y: 5, w: 8, h: 8 }, { patch: 15 }); o.small = 'no error'; } catch (e) { o.small = e.message; }
+      return o;
+    })()`);
+    check('Patch fill maths: continues a periodic texture into the border far better than a smear, leaves the picture byte for byte, is opaque and deterministic, never copies a marker from deep inside, and refuses an image too small for the patch', pm.texture.err < 30 && pm.texture.err < pm.texture.smearErr / 2 && pm.texture.centre && pm.texture.opaque && pm.texture.deterministic && pm.marker === 0 && /too small/.test(pm.small), J(pm));
+
+    const pxP = path.join(work, 'Patch see-through.png');
+    const pu = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms)); const o = {};
+      q('#btnTools').click(); await wait(80); q('#btnExtendImage').click(); await wait(300);
+      await __tf.extend.loadPath(${J(art)});
+      await __tf.extend.setParams({ mode: 'patch', link: false, top: 40, bottom: 40, left: 40, right: 40, seed: 1 });
+      o.rows = [...document.querySelectorAll('#exControls .row')].filter((r) => r.style.display !== 'none').map((r) => (r.querySelector('label') || r).textContent);
+      o.placeholder = { placeholder: __tf.extend.placeholder, full: __tf.extend.full, saveOff: q('#exSave').disabled, processOn: !q('#exProcess').disabled, w: __tf.extend.result?.width, h: __tf.extend.result?.height };
+      const job = __tf.extend.process(); await wait(60);
+      o.running = { patching: __tf.extend.patching, cancelShown: !q('#exCancel').hidden, progShown: !q('#exProg').hidden, processOff: q('#exProcess').disabled, saveOff: q('#exSave').disabled };
+      await job;
+      o.done = { patched: __tf.extend.patched, full: __tf.extend.full, saveOn: !q('#exSave').disabled, w: __tf.extend.result?.width, h: __tf.extend.result?.height, cancelHidden: q('#exCancel').hidden, processOff: q('#exProcess').disabled };
+      const rc = __tf.extend.result, src = __tf.extend.source;
+      { const a = src.getContext('2d').getImageData(0, 0, src.width, src.height).data, b = rc.getContext('2d').getImageData(0, 0, rc.width, rc.height).data; let same = true, opq = true;
+        for (let y = 0; y < rc.height; y++) for (let x = 0; x < rc.width; x++) { const j = (y * rc.width + x) * 4; if (b[j + 3] !== 255) opq = false; const sx = x - 40, sy = y - 40; if (sx >= 0 && sy >= 0 && sx < src.width && sy < src.height) { const i = (sy * src.width + sx) * 4; if (a[i] !== b[j] || a[i + 1] !== b[j + 1] || a[i + 2] !== b[j + 2]) same = false; } }
+        o.done.same = same; o.done.opaque = opq; }
+      await __tf.extend.setParams({ seed: 2 });                      // another Variation: the old fill is gone, a placeholder is shown again
+      o.changed = { patched: __tf.extend.patched, placeholder: __tf.extend.placeholder, saveOff: q('#exSave').disabled };
+      const job2 = __tf.extend.process(); await wait(80); __tf.extend.cancel(); await job2;
+      o.cancelled = { patching: __tf.extend.patching, patched: __tf.extend.patched, saveOff: q('#exSave').disabled, processOn: !q('#exProcess').disabled, msg: q('#exMsg').textContent, cancelHidden: q('#exCancel').hidden };
+      await __tf.extend.process();                                    // the worker was restarted: it gets the picture again
+      o.again = { patched: __tf.extend.patched, w: __tf.extend.result?.width };
+      const job3 = __tf.extend.setParams({ seed: 3 }); await job3;    // changing a setting while it runs (after a restart) must not leave it stuck
+      const job4 = __tf.extend.process(); await wait(80); const job5 = __tf.extend.setParams({ seed: 4 }); await Promise.all([job4, job5]);
+      o.interrupted = { patching: __tf.extend.patching, patched: __tf.extend.patched, placeholder: __tf.extend.placeholder, processOn: !q('#exProcess').disabled };
+      // the REAL controls while a fill runs: toggling the outline leaves it alone, Pad to square (a new setting) stops it and the placeholder arrives promptly
+      await __tf.extend.setParams({ seed: 5, link: false, top: 100, bottom: 100, left: 100, right: 100 });
+      const outline = [...document.querySelectorAll('#exControls .row')].find((r) => r.textContent.includes('Outline the original')).querySelector('input[type=checkbox]');
+      const jobA = __tf.extend.process(); await wait(80);
+      outline.click(); await wait(30);
+      o.outlineMid = { patching: __tf.extend.patching, bounds: __tf.extend.params.showBounds };
+      await jobA;
+      o.outlineDone = { patched: __tf.extend.patched, saveOn: !q('#exSave').disabled };
+      outline.click();
+      await __tf.extend.setParams({ seed: 6 });
+      const jobB = __tf.extend.process(); await wait(80);
+      const t1 = performance.now();
+      [...document.querySelectorAll('#exControls button')].find((b) => b.textContent === 'Pad to square').click();
+      for (let i = 0; i < 100 && !(__tf.extend.placeholder && __tf.extend.result?.width === 400 && !__tf.extend.busy); i++) await wait(50);
+      o.padMid = { ms: Math.round(performance.now() - t1), patching: __tf.extend.patching, cancelHidden: q('#exCancel').hidden, progHidden: q('#exProg').hidden, placeholder: __tf.extend.placeholder, w: __tf.extend.result?.width, h: __tf.extend.result?.height };
+      await jobB;
+      const jobC = __tf.extend.setParams({ top: 100, bottom: 100, left: 100, right: 100, seed: 7 }); await jobC;
+      const jobD = __tf.extend.process(); await wait(80);
+      q('#exReset').click();
+      for (let i = 0; i < 100 && !(__tf.extend.params.mode === 'mirror' && !__tf.extend.busy); i++) await wait(50);
+      o.resetMid = { patching: __tf.extend.patching, cancelHidden: q('#exCancel').hidden, mode: __tf.extend.params.mode };
+      await jobD;
+      await __tf.extend.setParams({ mode: 'patch', link: false, top: 40, bottom: 40, left: 40, right: 40, seed: 1 });
+      // an image with transparency: Patch fill refuses it, Mirror still works
+      const c = document.createElement('canvas'); c.width = 120; c.height = 90; const x = c.getContext('2d'); x.fillStyle = '#3a7'; x.fillRect(0, 0, 120, 90); x.clearRect(0, 0, 30, 30);
+      await window.api.writeFile(${J(pxP)}, new Uint8Array(await (await new Promise((res) => c.toBlob(res, 'image/png'))).arrayBuffer()));
+      await __tf.extend.loadPath(${J(pxP)}); await wait(300);
+      o.alpha = { processOff: q('#exProcess').disabled, msg: q('#exMsg').textContent.slice(0, 60), result: !!__tf.extend.result };
+      await __tf.extend.setParams({ mode: 'mirror', blur: 0.25, seed: 1 });
+      o.alphaMirror = { w: __tf.extend.result?.width, full: __tf.extend.full };
+      __tf.extend.close();
+      return o;
+    })()`);
+    check('Extend edges: Patch fill shows a placeholder (Save off, Process on) until Process; Process shows progress and Cancel, then gives a full opaque result with the picture untouched', pu.rows.includes('Patch size') && pu.rows.includes('Source band') && !pu.rows.includes('Soften with distance') && pu.placeholder.placeholder && !pu.placeholder.full && pu.placeholder.saveOff && pu.placeholder.processOn && pu.placeholder.w === 480 && pu.running.patching && pu.running.cancelShown && pu.running.progShown && pu.running.processOff && pu.running.saveOff && pu.done.patched && pu.done.full && pu.done.saveOn && pu.done.w === 480 && pu.done.h === 380 && pu.done.cancelHidden && pu.done.processOff && pu.done.same && pu.done.opaque, J(pu));
+    check('Extend edges: changing Variation drops the fill; Cancel stops a running fill (nothing saved, nothing stuck) and Process works again; changing a setting mid-run does not leave it busy', !pu.changed.patched && pu.changed.placeholder && pu.changed.saveOff && !pu.cancelled.patching && !pu.cancelled.patched && pu.cancelled.saveOff && pu.cancelled.processOn && /Cancelled/.test(pu.cancelled.msg) && pu.cancelled.cancelHidden && pu.again.patched && pu.again.w === 480 && !pu.interrupted.patching && !pu.interrupted.patched && pu.interrupted.placeholder && pu.interrupted.processOn, J({ changed: pu.changed, cancelled: pu.cancelled, again: pu.again, interrupted: pu.interrupted }));
+    check('Extend edges: toggling the outline mid-run leaves a Patch fill running to completion; Pad to square or Reset mid-run stops it cleanly (no stuck Cancel/progress) and the placeholder arrives promptly', pu.outlineMid.patching && pu.outlineDone.patched && pu.outlineDone.saveOn && !pu.padMid.patching && pu.padMid.cancelHidden && pu.padMid.progHidden && pu.padMid.placeholder && pu.padMid.ms < 4000 && pu.padMid.w === 400 && pu.padMid.h === 400 && !pu.resetMid.patching && pu.resetMid.cancelHidden && pu.resetMid.mode === 'mirror', J({ outlineMid: pu.outlineMid, outlineDone: pu.outlineDone, padMid: pu.padMid, resetMid: pu.resetMid }));
+    check('Extend edges: Patch fill refuses an image with transparency (Process off, says why) while Mirror still extends it', pu.alpha.processOff && /opaque/.test(pu.alpha.msg) && !pu.alpha.result && pu.alphaMirror.w === 200 && pu.alphaMirror.full, J({ alpha: pu.alpha, mirror: pu.alphaMirror }));
+
     // a big result is previewed at reduced size and only Process builds (and lets you save) the full image
     const bigP = path.join(work, 'Big.png'), bigOut = path.join(work, 'Big (extended).png');
     fs.rmSync(bigOut, { force: true });

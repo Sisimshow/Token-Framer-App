@@ -47,8 +47,11 @@ Personal-use project, largely AI-written.
 - **Tools > Upscale image…** enlarges an *opaque* image 2×, 3× or 4× (default 4×; the models always make 4×, so 2× and 3× shrink the result afterwards) with an upscaling model (4x-UltraMix_Smooth by default, or the 4x-UltraSharpV2 DAT model) on the same
   screen as Clean image; saved as a PNG.
 - **Tools > Extend edges…** adds canvas around an image (any side, or **Pad to square**) and fills the new border from the picture itself instead of a flat colour: *Mirror* reflects the picture outward
-  (no doubled line at the seam), *Smear* repeats the edge pixels, *Transparent* adds empty canvas. A blur that grows with the distance from the picture keeps the far edge a calm wash rather than a hard
-  echo. Images with transparency work. The preview follows the controls live; a very large result waits for **Process**. Saved as a PNG (`<name> (extended).png`).
+  (no doubled line at the seam), *Smear* repeats the edge pixels, *Patch fill* is a content-aware fill that copies matching patches from near the edge so textures and backgrounds carry on, and *Transparent*
+  adds empty canvas. A blur that grows with the distance from the picture keeps a mirror/smear fill a calm wash rather than a hard echo. Images with transparency work (except Patch fill, which needs an opaque
+  image). The preview follows the controls live; a result bigger than about 1200 px is previewed at reduced size and **Process** builds the full image (needed before saving). Patch fill is slow (about
+  40 s for a 2048 px image with 15% added on every side) and only runs when you press Process, with a progress bar and **Cancel**; until then the preview is a rough placeholder. Where the picture is
+  cut off by its edge (a figure running out of the frame) a fill can only smear it on, never continue it. *Variation* gives another fill. Saved as a PNG (`<name> (extended).png`).
 - **Converted image models** (used by Clean image, Upscale image and the solvers' pre-clean) live in `app/models/`: three at the moment, 1x_PureVision,
   4x-UltraMix_Smooth and 4x-UltraSharpV2. The large `.onnx` files are not tracked by git; each comes with a small `<name>.json` (scale and size rules) that is tracked and must stay
   next to its `.onnx`. Recreate one with ComfyUI's Python (ComfyUI need not be running):

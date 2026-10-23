@@ -20,25 +20,27 @@ export const el = (tag, cls, text) => {
 };
 
 /**
- * Request/response wrapper around a module worker. `ask(msg, transfer)` resolves with the worker's reply (matched by id) or rejects with its error.
+ * Request/response wrapper around a module worker. `ask(msg, transfer, onProgress)` resolves with the worker's reply (matched by id) or rejects with its error.
  * If the worker itself dies, every pending request is rejected and the next `ask` starts a fresh worker, so a crash never leaves a tool stuck.
+ * `cancel()` does the same on purpose, quietly (a worker holding state, such as a loaded image, has to be given it again afterwards).
  */
 export function makeRpc(url, onFatal = () => {}) {
   let worker = null, nextId = 0;
   const waiting = new Map();
-  const fail = (message) => {
-    for (const w of waiting.values()) w.reject(new Error(message));
+  const stop = (message, cancelled) => {
+    for (const w of waiting.values()) { const e = new Error(message); e.cancelled = cancelled; w.reject(e); }
     waiting.clear();
     try { worker?.terminate(); } catch { /* already gone */ }
     worker = null;
-    onFatal(message);
   };
+  const fail = (message) => { stop(message, false); onFatal(message); };
   const ensure = () => {
     if (worker) return worker;
     worker = new Worker(url, { type: 'module' });
     worker.onmessage = ({ data }) => {
       const w = waiting.get(data.id);
       if (!w) return;
+      if (data.type === 'progress') { w.onProgress?.(data); return; }
       waiting.delete(data.id);
       data.type === 'error' ? w.reject(new Error(data.message)) : w.resolve(data);
     };
@@ -46,11 +48,14 @@ export function makeRpc(url, onFatal = () => {}) {
     return worker;
   };
   return {
-    ask: (msg, transfer = []) => new Promise((resolve, reject) => {
+    /** `onProgress(data)` (optional) receives the worker's {type:'progress'} messages for this request. */
+    ask: (msg, transfer = [], onProgress) => new Promise((resolve, reject) => {
       const id = ++nextId;
-      waiting.set(id, { resolve, reject });
+      waiting.set(id, { resolve, reject, onProgress });
       ensure().postMessage({ ...msg, id }, transfer);
-    })
+    }),
+    /** Stops the worker (its work is lost, along with anything it was holding) and rejects every pending request with an error whose `cancelled` is true. onFatal is NOT called. */
+    cancel: () => stop('Cancelled', true)
   };
 }
 

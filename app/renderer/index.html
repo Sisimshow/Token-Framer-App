@@ -197,7 +197,8 @@
         <div id="exControls" class="tsControls"></div>
         <div class="tsFoot">
           <div id="exMsg" class="tsMsg hint">Open an image to begin. Images with transparency are fine.</div>
-          <div class="tsBtns"><button id="exReset" title="Put every control back to its default">Reset</button><button id="exProcess" class="primary" disabled title="Build the full-size image. A big result is previewed at reduced size until you press this, and saving needs it">Process</button></div>
+          <progress id="exProg" hidden max="1" value="0"></progress>
+          <div class="tsBtns"><button id="exReset" title="Put every control back to its default">Reset</button><button id="exCancel" hidden title="Stop the Patch fill">Cancel</button><button id="exProcess" class="primary" disabled title="Build the full-size image. A big result is previewed at reduced size until you press this, and saving needs it">Process</button></div>
           <div class="tsSaves">
             <button id="exSave" title="Choose where to save the extended image as a PNG">Save as…</button>
             <button id="exSaveOpen" class="primary" title="Save the extended image as a PNG, then open it in Token Framer as the art image">Save and open as image</button>

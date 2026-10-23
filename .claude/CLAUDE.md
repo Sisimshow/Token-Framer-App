@@ -61,9 +61,19 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
 - Extend edges (Image tools > Extend edges…, `renderer/extend.js`; maths `lib/extendedges.js` run by `lib/extendedges.worker.js`: `load` once, then `extend` per settings): pads an image (top/right/bottom/left, "link sides", "Pad to square" via
   `squarePadding`) and fills the border. Modes: `mirror` (periodic NON-duplicating reflect, `reflectIndex`: distance d reads source pixel d, so no doubled line at the seam, and padding wider than the picture bounces),
   `smear` (clamp) and `transparent`. A blur whose sigma = `blur` x distance from the picture is applied by blending Gaussian levels (sigma 0,1,2,4...; each level blurs the previous one further) on PREMULTIPLIED values, so alpha
-  images get no dark/coloured fringes; the original is copied back byte for byte. Accepts transparency (unlike the model tools). Live preview while the result is <= `HEAVY_PIXELS` (25 Mpx), otherwise the Process button (with `confirmHeavy`);
-  hard cap `MAX_EXTEND_PIXELS` 100 Mpx. Saves PNG as `<name> (extended).png`. Cost: about 3 s for a 3.4 Mpx result. Planned next (not built): a PatchMatch "Patch fill" mode (see the plan file notes: full resolution, source band near the
-  edge, seeded RNG), possibly a LaMa/MI-GAN ONNX mode later.
+  images get no dark/coloured fringes; the original is copied back byte for byte. Accepts transparency (unlike the model tools, and unlike Patch fill). The live preview is always cheap: a result up to `PREVIEW_MAX` (1200 px,
+  longest side) is the real image, a bigger one is made from a Lanczos-shrunk copy of the picture with scaled padding (worker `extend` with `scale` < 1, `inner` = where the original sits, for the outline), and the **Process**
+  button builds the full image (`confirmHeavy` above 25 Mpx); saving needs the full image (`saveable()`). Hard cap `MAX_EXTEND_PIXELS` 100 Mpx. Saves PNG as `<name> (extended).png`. Cost: about 3 s for a 3.4 Mpx full result.
+  The worker holds the loaded picture; `extend.js` re-sends it (`ask()`, `loadedInWorker`) after a cancel or crash.
+  **Patch fill** (`lib/patchfill.js`, mode `patch`, worker message `patch`): content-aware fill, PatchMatch (random start, propagation, random search) with Wexler-style voting, coarse to fine, finest level at full resolution, seeded
+  (`Variation`), RGB only (an image with transparency is refused). The first guess is a plain edge smear; the coarsest pyramid level smooths it by diffusion and finds matches against that before the first vote (a mirror first guess
+  copied structure such as a hat into the border; a blurred full-size smear cost 12 s for nothing). Source patches come only from a BAND next to the edge being filled (`band` 0.12 of the short side, per side of the target pixel) and
+  must lie wholly inside the original; known pixels weigh `knownWeight` 6 in the patch distance so the fill stays continuous with the picture (4 left a visible seam). Needs Process (progress bar, Cancel = `makeRpc().cancel()`,
+  which terminates the worker quietly); the live preview in this mode is a placeholder (a softened smear) that cannot be saved. Cost measured on 2048 px art with 15% padding: about 37 s (7 Mpx result). Known limit: where the
+  subject is cut off by the picture's edge the fill can only smear it on. Pen-and-paper estimates, not measured on big inputs: memory is about 50 bytes per output pixel in the worker, so Patch fill has its own lower cap
+  (`PATCH_MAX_PIXELS`) and a time warning.
+  `ui-kit.makeRpc` gained `ask(msg, transfer, onProgress)` (worker `{type:'progress'}` messages) and `cancel()` (rejects pending requests with an error whose `cancelled` is true, no `onFatal`).
+  Possible later: a LaMa/MI-GAN ONNX mode (feed-forward inpainting nets, 512 px fixed; both trained for holes, not borders).
 - `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).
 - `renderer/app.js`: UI, state, tools, saving. `renderer/lib/composite.js`: layer compositing and placement.
   `renderer/lib/colorremoval.js`: background removal masks. `renderer/lib/holedetect.js`: frame-opening detection.
