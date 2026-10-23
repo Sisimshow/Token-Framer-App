@@ -42,7 +42,10 @@ class App {
       const d = JSON.parse(m.data);
       if (d.id && this.pending.has(d.id)) { this.pending.get(d.id)(d); this.pending.delete(d.id); }
     };
-    await this.ev('new Promise((r) => { const t = setInterval(() => { if (window.__tf && __tf.frame) { clearInterval(t); r(); } }, 50); })');
+    for (let i = 0; ; i++) { // the page may still be loading (its context is replaced once), so a destroyed context is retried
+      try { await this.ev('new Promise((r) => { const t = setInterval(() => { if (window.__tf && __tf.frame) { clearInterval(t); r(); } }, 50); })'); break; }
+      catch (err) { if (i >= 40 || !/context was destroyed|Cannot find context/i.test(String(err.message))) throw err; await new Promise((r) => setTimeout(r, 250)); }
+    }
   }
   /** Evaluate an expression in the page (awaits promises) and return its JSON-able value. */
   async ev(expr) {
@@ -301,6 +304,7 @@ async function main() {
       for (let i = 0; i < 100 && !__tf.solver.result; i++) await wait(100);
       o.whole = [__tf.solver.result?.w, __tf.solver.result?.h];
       __tf.solver.open('frame'); await wait(600);                // back to frame mode: the same pair is trimmed again
+      for (let i = 0; i < 50 && !(__tf.solver.result && __tf.solver.result.w < 400); i++) await wait(100);   // (a busy machine can take longer than that)
       o.frame = { mode: __tf.solver.mode, title: q('#svTitle').textContent, button: q('#svSaveLoad').textContent, w: __tf.solver.result?.w, labels: [...document.querySelectorAll('#svControls .row label')].map((l) => l.textContent) };
       __tf.solver.open('image'); await wait(600);
       return o;
@@ -311,6 +315,80 @@ async function main() {
     const after = await app.ev(`(async () => { const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(outP)})])); const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d'); x.drawImage(bm, 0, 0);
       const a = (px, py) => x.getImageData(px, py, 1, 1).data[3]; return { w: bm.width, h: bm.height, ring: a(199, 60), corner: a(2, 2), items: __tf.items.length, path: __tf.items[0]?.path, frameUnchanged: !/solved/.test(__tf.frame.path), closed: document.querySelector('#solver').hidden }; })()`);
     check('Solve image background: Save and open as image writes the full-size PNG and opens it as the art image (the frame is left alone)', magic === '89504e47' && saved.w === 400 && after.w === 400 && after.h === 400 && after.ring > 200 && after.corner === 0 && after.items === 1 && after.path === outP && after.frameUnchanged && after.closed, J({ magic, saved: saved.w, after }));
+    await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art back for the checks that follow
+  }
+
+  // -- Extend edges: the padding maths (mirror / smear / transparent) and the screen
+  {
+    const exP = path.join(work, 'Art (extended).png');
+    fs.rmSync(exP, { force: true });
+    const m = await app.ev(`(async () => {
+      const ee = await import('./lib/extendedges.js'); const o = {};
+      const mk = (w, h, alpha = 255) => { const a = new Uint8ClampedArray(w * h * 4); for (let i = 0; i < w * h; i++) { a[i * 4] = (i % w) * 20 + 5; a[i * 4 + 1] = Math.floor(i / w) * 30 + 7; a[i * 4 + 2] = 90; a[i * 4 + 3] = alpha; } return a; };
+      const px = (r, x, y) => [...r.rgba.slice((y * r.w + x) * 4, (y * r.w + x) * 4 + 4)];
+      const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+      const src = mk(5, 3), at = (x, y) => [...src.slice((y * 5 + x) * 4, (y * 5 + x) * 4 + 4)];
+      o.reflect = [0, 1, 4, -1, -2, 5, 6, 7, 8, -5, 11].map((i) => ee.reflectIndex(i, 5)).join();
+      o.square = [ee.squarePadding(1000, 300), ee.squarePadding(300, 1001), ee.squarePadding(40, 40)];
+      // mirror, no softening: distance d outside reads the picture's pixel d (no doubled line), and the padding may be wider than the picture
+      const a = ee.extendEdges(src, 5, 3, { left: 12, right: 7, top: 4, bottom: 9, mode: 'mirror', blur: 0 });
+      o.size = [a.w, a.h];
+      o.centre = (() => { for (let y = 0; y < 3; y++) for (let x = 0; x < 5; x++) if (!eq(px(a, x + 12, y + 4), at(x, y))) return false; return true; })();
+      o.mirrorL = eq(px(a, 11, 4), at(1, 0)) && eq(px(a, 10, 4), at(2, 0)) && eq(px(a, 8, 4), at(4, 0)) && eq(px(a, 7, 4), at(3, 0)) && eq(px(a, 0, 4), at(ee.reflectIndex(-12, 5), 0));
+      o.mirrorT = eq(px(a, 12, 3), at(0, 1)) && eq(px(a, 12, 2), at(0, 2)) && eq(px(a, 12, 1), at(0, 1)) && eq(px(a, 12, 0), at(0, 0));
+      o.corner = eq(px(a, 11, 3), at(1, 1)) && eq(px(a, 0, 0), at(ee.reflectIndex(-12, 5), ee.reflectIndex(-4, 3)));
+      // smear: the edge pixels repeat, corners take the corner pixel
+      const s = ee.extendEdges(src, 5, 3, { left: 6, right: 6, top: 6, bottom: 6, mode: 'smear', blur: 0 });
+      o.smearEdge = eq(px(s, 0, 7), at(0, 1)) && eq(px(s, 16, 8), at(4, 2)) && eq(px(s, 3, 0), at(0, 0)) && eq(px(s, 0, 0), at(0, 0)) && eq(px(s, 16, 14), at(4, 2)) && eq(px(s, 9, 14), at(3, 2));
+      // transparent: empty border, picture intact
+      const t = ee.extendEdges(src, 5, 3, { left: 2, right: 2, top: 2, bottom: 2, mode: 'transparent' });
+      o.transparent = t.w === 9 && t.h === 7 && px(t, 0, 0)[3] === 0 && px(t, 8, 6)[3] === 0 && eq(px(t, 2, 2), at(0, 0));
+      // softening keeps the picture byte-identical and does not darken a half-transparent picture (blur runs on premultiplied values)
+      const red = new Uint8ClampedArray(6 * 6 * 4); for (let i = 0; i < 36; i++) { red[i * 4] = 250; red[i * 4 + 1] = 10; red[i * 4 + 2] = 10; red[i * 4 + 3] = i % 6 < 3 ? 255 : 90; }
+      const b = ee.extendEdges(red, 6, 6, { left: 20, right: 20, top: 20, bottom: 20, mode: 'mirror', blur: 0.6 });
+      let fringe = 0, visible = 0; for (let i = 0; i < b.w * b.h; i++) if (b.rgba[i * 4 + 3] > 20) { visible++; if (b.rgba[i * 4] < 240 || b.rgba[i * 4 + 1] > 20) fringe++; }
+      o.alphaBlur = { visible, fringe, centre: (() => { for (let y = 0; y < 6; y++) for (let x = 0; x < 6; x++) { const p = px(b, x + 20, y + 20); for (let c = 0; c < 4; c++) if (p[c] !== red[(y * 6 + x) * 4 + c]) return false; } return true; })() };
+      // softening grows with distance: next to the picture the fill is sharp, far away it is smoother
+      const stripes = new Uint8ClampedArray(40 * 8 * 4); for (let i = 0; i < 40 * 8; i++) { const v = (((i % 40) >> 2) % 2) * 255; stripes[i * 4] = stripes[i * 4 + 1] = stripes[i * 4 + 2] = v; stripes[i * 4 + 3] = 255; }
+      const d = ee.extendEdges(stripes, 40, 8, { top: 60, mode: 'mirror', blur: 0.5 });
+      const spread = (y) => { let lo = 255, hi = 0; for (let x = 5; x < 35; x++) { const v = d.rgba[(y * d.w + x) * 4]; lo = Math.min(lo, v); hi = Math.max(hi, v); } return hi - lo; };
+      o.soft = { near: spread(59), far: spread(2) };
+      try { ee.extendEdges(src, 5, 3, { left: 20000, right: 20000, top: 20000 }); o.limit = false; } catch (e) { o.limit = /megapixel/.test(e.message); }
+      return o;
+    })()`);
+    check('Extend edges maths: reflect indices bounce without repeating the edge, "pad to square" is centred', m.reflect === '0,1,4,1,2,3,2,1,0,3,3' && J(m.square[0]) === J({ top: 350, bottom: 350, left: 0, right: 0 }) && J(m.square[1]) === J({ left: 350, right: 351, top: 0, bottom: 0 }) && J(m.square[2]) === J({ top: 0, right: 0, bottom: 0, left: 0 }), J({ reflect: m.reflect, square: m.square }));
+    check('Extend edges maths: mirror keeps the picture byte for byte, reads source pixel d at distance d (no doubled line), copes with padding wider than the picture, mirrors corners on both axes', J(m.size) === J([24, 16]) && m.centre && m.mirrorL && m.mirrorT && m.corner, J(m));
+    check('Extend edges maths: smear repeats the edge pixels; transparent adds empty canvas', m.smearEdge && m.transparent, J({ smearEdge: m.smearEdge, transparent: m.transparent }));
+    check('Extend edges maths: softening leaves the picture untouched, adds no dark/coloured fringe to a half-transparent picture, is sharper near the picture than far from it, and refuses a result over the pixel limit', m.alphaBlur.centre && m.alphaBlur.visible > 100 && m.alphaBlur.fringe === 0 && m.soft.near > 200 && m.soft.far < m.soft.near / 2 && m.limit, J({ alphaBlur: m.alphaBlur, soft: m.soft, limit: m.limit }));
+
+    const r = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms)); const o = {};
+      q('#btnTools').click(); await wait(80); q('#btnExtendImage').click(); await wait(300);
+      o.open = !q('#extend').hidden; o.menuClosed = q('#toolsMenu').hidden;
+      await __tf.extend.loadPath(${J(art)}); await wait(200);
+      o.start = { saveOff: q('#exSave').disabled, processOff: q('#exProcess').disabled, bounds: __tf.extend.source && [__tf.extend.source.width, __tf.extend.source.height] };
+      [...document.querySelectorAll('#exControls button')].find((b) => b.textContent === 'Pad to square').click();
+      for (let i = 0; i < 100 && !__tf.extend.fresh; i++) await wait(100);
+      const rc = __tf.extend.result, src = __tf.extend.source;
+      o.square = { w: rc?.width, h: rc?.height, saveOn: !q('#exSave').disabled, params: __tf.extend.params };
+      if (rc) { const a = src.getContext('2d').getImageData(0, 0, src.width, src.height).data, b = rc.getContext('2d').getImageData(0, 0, rc.width, rc.height).data; let same = true;
+        for (let y = 0; y < src.height && same; y++) for (let x = 0; x < src.width; x++) { const i = (y * src.width + x) * 4, j = ((y + __tf.extend.params.top) * rc.width + x + __tf.extend.params.left) * 4; if (a[i] !== b[j] || a[i + 1] !== b[j + 1] || a[i + 2] !== b[j + 2] || a[i + 3] !== b[j + 3]) { same = false; break; } }
+        o.square.same = same; }
+      await __tf.extend.setParams({ top: 0, bottom: 0, left: 0, right: 0 }); o.zero = { result: !!__tf.extend.result, saveOff: q('#exSave').disabled };
+      await __tf.extend.setParams({ link: true, left: 13 });
+      o.link = { params: __tf.extend.params, w: __tf.extend.result?.width, h: __tf.extend.result?.height };
+      await __tf.extend.setParams({ mode: 'transparent' });
+      const tc = __tf.extend.result; o.transparent = tc && tc.getContext('2d').getImageData(0, 0, 1, 1).data[3];
+      await __tf.extend.setParams({ mode: 'mirror', blur: 0.25, link: false, top: 20, bottom: 20, left: 20, right: 20 });
+      return o;
+    })()`);
+    check('Extend edges: opens from Tools, nothing to save until there is a padded result', r.open && r.menuClosed && r.start.saveOff && r.start.processOff && J(r.start.bounds) === J([400, 300]), J(r.start));
+    check('Extend edges: "Pad to square" makes a square result with the original untouched in the middle, and enables saving', r.square.w === 400 && r.square.h === 400 && r.square.same && r.square.saveOn, J(r.square));
+    check('Extend edges: zero padding has no result to save; linked sides change together; transparent mode leaves an empty border', !r.zero.result && r.zero.saveOff && r.link.params.top === 13 && r.link.params.right === 13 && r.link.params.bottom === 13 && r.link.w === 426 && r.link.h === 326 && r.transparent === 0, J({ zero: r.zero, link: r.link, transparent: r.transparent }));
+    const saved = await app.ev(`__tf.extend.saveAndOpen(${J(exP)})`);
+    const magic = fs.existsSync(exP) ? fs.readFileSync(exP).subarray(0, 4).toString('hex') : '';
+    const after = await app.ev(`({ items: __tf.items.length, path: __tf.items[0]?.path, closed: document.querySelector('#extend').hidden })`);
+    check('Extend edges: Save and open as image writes a PNG of the padded size and opens it in the main window', magic === '89504e47' && saved.w === 440 && saved.h === 340 && after.items === 1 && after.path === exP && after.closed, J({ magic, saved, after }));
     await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art back for the checks that follow
   }
 
@@ -581,7 +659,9 @@ async function main() {
         document.querySelector('#btnTools').click(); await new Promise((r) => setTimeout(r, 100)); document.querySelector('#btnRemoveImage').click(); await new Promise((r) => setTimeout(r, 300));
         await __tf.bgremove.loadPath(${J(markP)}); await new Promise((r) => setTimeout(r, 300)); })()`);
       const mouse = (type, x, y, extra = {}) => app.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
-      const geo = await app.ev(`(() => { const c = document.querySelector('#brPreview'), r = c.getBoundingClientRect(); return { l: r.left + c.clientLeft, t: r.top + c.clientTop, w: r.width - 2 * c.clientLeft, backing: c.width, dpr: devicePixelRatio }; })()`);
+      const readGeo = () => app.ev(`(() => { const c = document.querySelector('#brPreview'), r = c.getBoundingClientRect(); return { l: r.left + c.clientLeft, t: r.top + c.clientTop, w: r.width - 2 * c.clientLeft, backing: c.width, dpr: devicePixelRatio }; })()`);
+      let geo = await readGeo();
+      for (let i = 0; i < 40 && geo.backing !== Math.round(geo.w * geo.dpr); i++) { await sleep(100); geo = await readGeo(); }   // the canvas is sized after layout settles; a busy machine can take a moment
       const rows = [];
       for (const size of [1, 2, 3]) {
         await app.ev(`(__tf.bgremove.setParams({ brushSize: ${size}, brushMode: 'erase' }), __tf.bgremove.tool || __tf.bgremove.setTool('brush'), document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '0', bubbles: true })), 1)`);

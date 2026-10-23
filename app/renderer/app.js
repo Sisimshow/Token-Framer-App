@@ -6,6 +6,7 @@ import { MATTE_RES } from './lib/matte.js';
 import { initCleaner } from './cleaner.js';
 import { initSolver } from './solver.js';
 import { initImageCleaner } from './imgclean.js';
+import { initExtendEdges } from './extend.js';
 import { initBgRemover } from './bgremove.js';
 
 const api = window.api;
@@ -1421,10 +1422,12 @@ function setup() {
   const cleaner = (window.__cleaner = initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }));
   window.__solver = initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf });
   window.__imgclean = initImageCleaner({ api, openImages, dirOf, sepOf, baseOf });
+  window.__extend = initExtendEdges({ api, openImages, dirOf, sepOf, baseOf });
   window.__bgremove = initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf, computeMatte, ensureAiModel });
   $('#btnCleanImage').onclick = () => { setToolsMenu(false); window.__imgclean.open('clean'); };
   $('#btnUpscaleImage').onclick = () => { setToolsMenu(false); window.__imgclean.open('upscale'); };
-  $('#btnCleanFrame').onclick = () => { setToolsMenu(false); cleaner.open(); };
+  $('#btnExtendImage').onclick = () => { setToolsMenu(false); window.__extend.open(); };
+  $('#btnCleanFrame').onclick =() => { setToolsMenu(false); cleaner.open(); };
   $('#btnSolveFrame').onclick = () => { setToolsMenu(false); window.__solver.open('frame'); };
   $('#btnSolveImage').onclick = () => { setToolsMenu(false); window.__solver.open('image'); };
   $('#btnRemoveImage').onclick = () => { setToolsMenu(false); window.__bgremove.open('image'); };
@@ -1496,4 +1499,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, clientOfSrc, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, get bgremove() { return window.__bgremove; }, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, clientOfSrc, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, get extend() { return window.__extend; }, get bgremove() { return window.__bgremove; }, eff, compositeFor, resolveCfg }); // DevTools / tests

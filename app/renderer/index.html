@@ -30,7 +30,8 @@
             <div class="tmhead">Image tools</div>
             <button id="btnUpscaleImage" title="Enlarge an opaque image 2x, 3x or 4x with an upscaling model">Upscale image…</button>
             <button id="btnCleanImage" title="Remove compression noise and artifacts from an opaque image with a restoration model">Clean image…</button>
-            <button id="btnSolveImage" title="Make a transparent image from the same render on a white and on a black background">Solve image background…</button>
+            <button id="btnExtendImage" title="Add more canvas around an image and fill the new border from the picture itself (mirror or smear), not a flat colour">Extend edges…</button>
+            <button id="btnSolveImage"title="Make a transparent image from the same render on a white and on a black background">Solve image background…</button>
             <button id="btnRemoveImage" title="Cut the background out of an image with AI, a colour, the wand, brush and rectangle, on a screen of its own">Remove image background…</button>
             <div class="tmhead">Frame tools</div>
             <button id="btnCleanFrame" title="Refine a frame's transparent edges, trim the empty border and resize it">Clean frame…</button>
@@ -177,6 +178,29 @@
           <div class="tsSaves">
             <button id="icSave" title="Choose where to save the cleaned image as a PNG">Save as…</button>
             <button id="icSaveOpen" class="primary" title="Save the cleaned image as a PNG, then open it in Token Framer as the art image">Save and open as image</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <div id="extend" class="toolscreen" hidden role="dialog" aria-modal="true" aria-label="Extend edges">
+    <div class="tsBar">
+      <strong>Extend edges</strong>
+      <button id="exOpen" title="Pick an image (or drop one here)">Open image…</button>
+      <span id="exName" class="tsName muted">no image</span>
+      <span class="grow"></span>
+      <button id="exClose" class="tsClose" title="Back to Token Framer (Esc)">Close</button>
+    </div>
+    <div class="tsMain">
+      <div class="tsView"><canvas id="exPreview" class="tsPreview" width="800" height="800"></canvas><span id="exBadge" class="badge"></span><div class="tsDrop">Drop an image here</div></div>
+      <aside class="tsSide">
+        <div id="exControls" class="tsControls"></div>
+        <div class="tsFoot">
+          <div id="exMsg" class="tsMsg hint">Open an image to begin. Images with transparency are fine.</div>
+          <div class="tsBtns"><button id="exReset" title="Put every control back to its default">Reset</button><button id="exProcess" class="primary" disabled title="Compute the result now (needed only for a very large result, which is not followed live)">Process</button></div>
+          <div class="tsSaves">
+            <button id="exSave" title="Choose where to save the extended image as a PNG">Save as…</button>
+            <button id="exSaveOpen" class="primary" title="Save the extended image as a PNG, then open it in Token Framer as the art image">Save and open as image</button>
           </div>
         </div>
       </aside>
