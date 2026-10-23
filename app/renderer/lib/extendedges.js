@@ -3,7 +3,7 @@
 // Mirror and smear are softened by a blur that grows with the distance from the picture, so the far edge is a calm wash instead of a hard echo.
 // RGBA is straight (not premultiplied) in and out; every blur runs on premultiplied values so transparent pixels never leave dark or coloured fringes.
 
-export const EXTEND_DEFAULTS = { top: 0, right: 0, bottom: 0, left: 0, link: false, mode: 'mirror', blur: 0.25, patch: 7, iterations: 4, band: 0.12, seed: 1, showBounds: true };
+export const EXTEND_DEFAULTS = { top: 0, right: 0, bottom: 0, left: 0, link: false, mode: 'patch', blur: 0.25, patch: 7, iterations: 4, band: 0.12, seed: 1, showBounds: true };
 
 /** The live preview of a big result is made at this size (longest side, pixels); the full-size image is made when Process is pressed. */
 export const PREVIEW_MAX = 1200;

@@ -366,6 +366,7 @@ async function main() {
       q('#btnTools').click(); await wait(80); q('#btnExtendImage').click(); await wait(300);
       o.open = !q('#extend').hidden; o.menuClosed = q('#toolsMenu').hidden;
       await __tf.extend.loadPath(${J(art)}); await wait(200);
+      await __tf.extend.setParams({ mode: 'mirror' });   // (Patch fill is the default; these checks are about the instant modes)
       o.start = { saveOff: q('#exSave').disabled, processOff: q('#exProcess').disabled, bounds: __tf.extend.source && [__tf.extend.source.width, __tf.extend.source.height] };
       [...document.querySelectorAll('#exControls button')].find((b) => b.textContent === 'Pad to square').click();
       for (let i = 0; i < 100 && !__tf.extend.fresh; i++) await wait(100);
@@ -461,8 +462,8 @@ async function main() {
       const jobC = __tf.extend.setParams({ top: 100, bottom: 100, left: 100, right: 100, seed: 7 }); await jobC;
       const jobD = __tf.extend.process(); await wait(80);
       q('#exReset').click();
-      for (let i = 0; i < 100 && !(__tf.extend.params.mode === 'mirror' && !__tf.extend.busy); i++) await wait(50);
-      o.resetMid = { patching: __tf.extend.patching, cancelHidden: q('#exCancel').hidden, mode: __tf.extend.params.mode };
+      for (let i = 0; i < 100 && !(__tf.extend.params.top === 0 && !__tf.extend.busy); i++) await wait(50);
+      o.resetMid = { patching: __tf.extend.patching, cancelHidden: q('#exCancel').hidden, mode: __tf.extend.params.mode, top: __tf.extend.params.top };
       await jobD;
       await __tf.extend.setParams({ mode: 'patch', link: false, top: 40, bottom: 40, left: 40, right: 40, seed: 1 });
       // an image with transparency: Patch fill refuses it, Mirror still works
@@ -477,7 +478,7 @@ async function main() {
     })()`);
     check('Extend edges: Patch fill shows a placeholder (Save off, Process on) until Process; Process shows progress and Cancel, then gives a full opaque result with the picture untouched', pu.rows.includes('Patch size') && pu.rows.includes('Source band') && !pu.rows.includes('Soften with distance') && pu.placeholder.placeholder && !pu.placeholder.full && pu.placeholder.saveOff && pu.placeholder.processOn && pu.placeholder.w === 480 && pu.running.patching && pu.running.cancelShown && pu.running.progShown && pu.running.processOff && pu.running.saveOff && pu.done.patched && pu.done.full && pu.done.saveOn && pu.done.w === 480 && pu.done.h === 380 && pu.done.cancelHidden && pu.done.processOff && pu.done.same && pu.done.opaque, J(pu));
     check('Extend edges: changing Variation drops the fill; Cancel stops a running fill (nothing saved, nothing stuck) and Process works again; changing a setting mid-run does not leave it busy', !pu.changed.patched && pu.changed.placeholder && pu.changed.saveOff && !pu.cancelled.patching && !pu.cancelled.patched && pu.cancelled.saveOff && pu.cancelled.processOn && /Cancelled/.test(pu.cancelled.msg) && pu.cancelled.cancelHidden && pu.again.patched && pu.again.w === 480 && !pu.interrupted.patching && !pu.interrupted.patched && pu.interrupted.placeholder && pu.interrupted.processOn, J({ changed: pu.changed, cancelled: pu.cancelled, again: pu.again, interrupted: pu.interrupted }));
-    check('Extend edges: toggling the outline mid-run leaves a Patch fill running to completion; Pad to square or Reset mid-run stops it cleanly (no stuck Cancel/progress) and the placeholder arrives promptly', pu.outlineMid.patching && pu.outlineDone.patched && pu.outlineDone.saveOn && !pu.padMid.patching && pu.padMid.cancelHidden && pu.padMid.progHidden && pu.padMid.placeholder && pu.padMid.ms < 4000 && pu.padMid.w === 400 && pu.padMid.h === 400 && !pu.resetMid.patching && pu.resetMid.cancelHidden && pu.resetMid.mode === 'mirror', J({ outlineMid: pu.outlineMid, outlineDone: pu.outlineDone, padMid: pu.padMid, resetMid: pu.resetMid }));
+    check('Extend edges: toggling the outline mid-run leaves a Patch fill running to completion; Pad to square or Reset mid-run stops it cleanly (no stuck Cancel/progress) and the placeholder arrives promptly', pu.outlineMid.patching && pu.outlineDone.patched && pu.outlineDone.saveOn && !pu.padMid.patching && pu.padMid.cancelHidden && pu.padMid.progHidden && pu.padMid.placeholder && pu.padMid.ms < 4000 && pu.padMid.w === 400 && pu.padMid.h === 400 && !pu.resetMid.patching && pu.resetMid.cancelHidden && pu.resetMid.mode === 'patch' && pu.resetMid.top === 0, J({ outlineMid: pu.outlineMid, outlineDone: pu.outlineDone, padMid: pu.padMid, resetMid: pu.resetMid }));
     check('Extend edges: Patch fill refuses an image with transparency (Process off, says why) while Mirror still extends it', pu.alpha.processOff && /opaque/.test(pu.alpha.msg) && !pu.alpha.result && pu.alphaMirror.w === 200 && pu.alphaMirror.full, J({ alpha: pu.alpha, mirror: pu.alphaMirror }));
 
     // a big result is previewed at reduced size and only Process builds (and lets you save) the full image
@@ -897,6 +898,41 @@ async function main() {
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
     await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600); // put the shared test art and frame back for the checks that follow
+  }
+
+  {
+    // "Send to tool": the Image and Frame sections open each tool with the current file loaded
+    const send = await app.ev(`(async () => {
+      const q = (x) => document.querySelector(x); const wait = (ms) => new Promise((res) => setTimeout(res, ms)); const o = {};
+      await __tf.openImages([${J(art)}]); await wait(800);
+      const grid = (title) => [...document.querySelectorAll('#panel details')].find((d) => d.dataset.title === title);
+      const btn = (title, text) => [...grid(title).querySelectorAll('button')].find((b) => b.textContent === text);
+      o.image = [...grid('Image').querySelectorAll('.toolgrid button')].map((b) => b.textContent + (b.disabled ? '!' : ''));
+      o.frame = [...grid('Frame').querySelectorAll('.toolgrid button')].map((b) => b.textContent + (b.disabled ? '!' : ''));
+      const closeAll = () => { for (const id of ['#imgclean', '#extend', '#bgremove', '#cleaner']) q(id).hidden = true; };
+      const art = ${J(path.basename(art))};
+      const cases = [['Image', 'Upscale image', '#imgclean', '#icName', '#icTitle'], ['Image', 'Extend edges', '#extend', '#exName', null], ['Image', 'Clean image', '#imgclean', '#icName', '#icTitle'], ['Image', 'Remove background', '#bgremove', '#brName', '#brTitle']];
+      o.sent = [];
+      for (const [sec, text, screen, nameEl, titleEl] of cases) {
+        closeAll(); btn(sec, text).click();
+        for (let i = 0; i < 60 && !(q(nameEl).textContent === art); i++) await wait(100);
+        o.sent.push({ text, open: !q(screen).hidden, name: q(nameEl).textContent, title: titleEl ? q(titleEl).textContent : null });
+      }
+      closeAll();
+      // a frame goes to the frame tools
+      const frameName = __tf.frame.name;
+      o.frameSent = [];
+      for (const [text, screen, nameEl] of [['Clean frame', '#cleaner', '#cfName'], ['Remove background', '#bgremove', '#brName']]) {
+        closeAll(); btn('Frame', text).click();
+        for (let i = 0; i < 60 && !(q(nameEl).textContent === frameName); i++) await wait(100);
+        o.frameSent.push({ text, open: !q(screen).hidden, name: q(nameEl).textContent, expect: frameName });
+      }
+      o.bgFrameMode = q('#brTitle').textContent;
+      closeAll(); o.art = art;
+      return o;
+    })()`);
+    check('Send to tool: the Image section offers Upscale, Extend edges, Clean and Remove background (no Solve), the Frame section Clean frame and Remove background; each opens its tool with the current file loaded', J(send.image) === J(['Upscale image', 'Extend edges', 'Clean image', 'Remove background']) && J(send.frame) === J(['Clean frame', 'Remove background']) && send.sent.every((s) => s.open && s.name === send.art) && /pscale/.test(send.sent[0].title) && /lean/.test(send.sent[2].title) && send.frameSent.every((s) => s.open && s.name.startsWith(s.expect)) && /rame/.test(send.bgFrameMode), J(send));
+
   }
 
   // -- Auto center anchors: top keeps the art's top edge fixed while Scale x changes, bottom keeps the bottom edge, centre the middle

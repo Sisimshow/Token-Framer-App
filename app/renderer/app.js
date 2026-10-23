@@ -88,7 +88,9 @@ const SECTIONS = [
     ...offs('fitOffset', 'Nudge', fit, 200),
     num('baseScale', 'Scale', 0.2, 2.5, 0.01, (c) => !fit(c)),
     ...offs('baseOffset', 'Offset', (c) => !fit(c)),
-    { k: 'baseOverFrame', t: 'check', label: 'Art over frame' }
+    { k: 'baseOverFrame', t: 'check', label: 'Art over frame' },
+    { t: 'subhead', label: 'Send to tool', note: 'opens the original file; save there, then load it back' },
+    { t: 'sendtools', target: 'image', label: '' }
   ] },
   { title: 'Mask', open: true, controls: [
     { k: 'maskShape', t: 'select', label: 'Shape', opts: [['hole', 'Frame shape (auto)'], ['circle', 'Circle'], ['square', 'Square'], ['hexagon', 'Hexagon'], ['none', 'None']] },
@@ -103,7 +105,9 @@ const SECTIONS = [
     num('frameScale', 'Scale', 0.5, 1.5, 0.01),
     ...offs('frameOffset', 'Offset'),
     num('frameOpacity', 'Opacity', 0, 1, 0.01),
-    { k: 'frameTintOn', k2: 'frameTintColor', t: 'tint', label: 'Tint' }
+    { k: 'frameTintOn', k2: 'frameTintColor', t: 'tint', label: 'Tint' },
+    { t: 'subhead', label: 'Send to tool', note: 'opens the original file; save there, then use it as the frame' },
+    { t: 'sendtools', target: 'frame', label: '' }
   ] },
   { title: 'Overlay', controls: [
     { k: 'overlayImage', t: 'file', label: 'Image' },
@@ -158,6 +162,23 @@ const SECTIONS = [
   ] }
 ];
 const ctls = [];
+
+/**
+ * "Send to tool": the tool screens that take one image, each opened with a file already loaded. Solve (needs a white AND a black render of the same picture) is not offered.
+ * Each entry: [label, tooltip, (path) => open the tool with it]. The tools open the ORIGINAL file, not the framed or cut-out preview.
+ */
+const SEND_TOOLS = {
+  image: [
+    ['Upscale image', 'Enlarge this image with an upscaling model', async (p) => { await window.__imgclean.open('upscale'); await window.__imgclean.loadPath(p); }],
+    ['Extend edges', 'Add canvas around this image and fill it from the picture itself', async (p) => { window.__extend.open(); await window.__extend.loadPath(p); }],
+    ['Clean image', 'Remove compression noise from this image', async (p) => { await window.__imgclean.open('clean'); await window.__imgclean.loadPath(p); }],
+    ['Remove background', 'Cut the background out of this image on a screen of its own', async (p) => { window.__bgremove.open('image'); await window.__bgremove.loadPath(p); }]
+  ],
+  frame: [
+    ['Clean frame', 'Refine this frame\'s edges, trim it and resize it', async (p) => { window.__cleaner.open(); await window.__cleaner.loadPath(p); }],
+    ['Remove background', 'Cut the background out of this frame on a screen of its own', async (p) => { window.__bgremove.open('frame'); await window.__bgremove.loadPath(p); }]
+  ]
+};
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -273,6 +294,20 @@ function buildControl(c, ctl) {
     wrap.append(b, ' Auto center');
     ctl.append(wrap, pick);
     c.sync = (cfg) => { b.checked = !!cfg[c.k]; wrap.style.display = holeValid() ? '' : 'none'; pick.classList.toggle('active', state.pickSeed); };
+  } else if (c.t === 'sendtools') {
+    ctl.classList.add('toolgrid');
+    const pathNow = () => (c.target === 'frame' ? state.frame?.path : curItem()?.path);
+    const btns = SEND_TOOLS[c.target].map(([text, tip, go]) => {
+      const b = el('button', null, text); b.title = `${tip} (the original file, without what was changed here)`;
+      b.addEventListener('click', async () => {
+        const p = pathNow();
+        if (!p) return;
+        try { await go(p); } catch (err) { setStatus(`Could not send it to the tool: ${err.message}`, true); }
+      });
+      ctl.append(b);
+      return b;
+    });
+    c.sync = () => { const has = !!pathNow(); for (const b of btns) b.disabled = !has; if (!has) ctl.title = c.target === 'frame' ? 'Choose a frame first' : 'A pasted image has no file to send; save it first'; else ctl.title = ''; };
   } else if (c.t === 'aitool') {
     ctl.classList.add('wrap');
     const b = el('button', null, 'AI remove (RMBG-2.0)');

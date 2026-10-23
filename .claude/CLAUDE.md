@@ -65,7 +65,7 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   longest side) is the real image, a bigger one is made from a Lanczos-shrunk copy of the picture with scaled padding (worker `extend` with `scale` < 1, `inner` = where the original sits, for the outline), and the **Process**
   button builds the full image (`confirmHeavy` above 25 Mpx); saving needs the full image (`saveable()`). Hard cap `MAX_EXTEND_PIXELS` 100 Mpx. Saves PNG as `<name> (extended).png`. Cost: about 3 s for a 3.4 Mpx full result.
   The worker holds the loaded picture; `extend.js` re-sends it (`ask()`, `loadedInWorker`) after a cancel or crash.
-  **Patch fill** (`lib/patchfill.js`, mode `patch`, worker message `patch`): content-aware fill, PatchMatch (random start, propagation, random search) with Wexler-style voting, coarse to fine, finest level at full resolution, seeded
+  **Patch fill** (`lib/patchfill.js`, mode `patch`, the default mode, worker message `patch`): content-aware fill, PatchMatch (random start, propagation, random search) with Wexler-style voting, coarse to fine, finest level at full resolution, seeded
   (`Variation`), RGB only (an image with transparency is refused). The first guess is a plain edge smear; the coarsest pyramid level smooths it by diffusion and finds matches against that before the first vote (a mirror first guess
   copied structure such as a hat into the border; a blurred full-size smear cost 12 s for nothing). Source patches come only from a BAND next to the edge being filled (`band` 0.12 of the short side, per side of the target pixel) and
   must lie wholly inside the original; known pixels weigh `knownWeight` 6 in the patch distance so the fill stays continuous with the picture (4 left a visible seam). Needs Process (progress bar, Cancel = `makeRpc().cancel()`,
@@ -74,6 +74,9 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   (`PATCH_MAX_PIXELS`) and a time warning.
   `ui-kit.makeRpc` gained `ask(msg, transfer, onProgress)` (worker `{type:'progress'}` messages) and `cancel()` (rejects pending requests with an error whose `cancelled` is true, no `onFatal`).
   Possible later: a LaMa/MI-GAN ONNX mode (feed-forward inpainting nets, 512 px fixed; both trained for holes, not borders).
+- "Send to tool" (end of the Image and Frame panel sections, control type `sendtools`, `SEND_TOOLS` in `app.js`): one button per single-image tool that opens it with `curItem().path` (Image) or `state.frame.path` (Frame) already loaded
+  through the tool's `loadPath`. It sends the ORIGINAL file (no framing/cutout edits, nothing from `override`); disabled for a pasted image (no path). Solve is deliberately not offered (needs two renders).
+  Nothing is returned automatically: the tools' own "Save and open as image / use as frame" does that. Add a new tool by adding an entry (it needs `open()` and `loadPath(path)`).
 - `renderer/lib/zip.js`: tiny store-only ZIP writer for "Save all as ZIP" (no dependency).
 - `renderer/app.js`: UI, state, tools, saving. `renderer/lib/composite.js`: layer compositing and placement.
   `renderer/lib/colorremoval.js`: background removal masks. `renderer/lib/holedetect.js`: frame-opening detection.
