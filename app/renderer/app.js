@@ -89,7 +89,7 @@ const SECTIONS = [
     num('baseScale', 'Scale', 0.2, 2.5, 0.01, (c) => !fit(c)),
     ...offs('baseOffset', 'Offset', (c) => !fit(c)),
     { k: 'baseOverFrame', t: 'check', label: 'Art over frame' },
-    { t: 'subhead', label: 'Send to tool', note: 'opens the original file' },
+    { t: 'subhead', label: 'Send to tool', note: 'Opens image in the following tool' },
     { t: 'sendtools', target: 'image', label: '' }
   ] },
   { title: 'Mask', open: true, controls: [
@@ -106,7 +106,7 @@ const SECTIONS = [
     ...offs('frameOffset', 'Offset'),
     num('frameOpacity', 'Opacity', 0, 1, 0.01),
     { k: 'frameTintOn', k2: 'frameTintColor', t: 'tint', label: 'Tint' },
-    { t: 'subhead', label: 'Send to tool', note: 'opens the original file' },
+    { t: 'subhead', label: 'Send to tool', note: 'Opens frame in the following tool' },
     { t: 'sendtools', target: 'frame', label: '' }
   ] },
   { title: 'Overlay', controls: [

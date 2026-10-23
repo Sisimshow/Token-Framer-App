@@ -329,7 +329,7 @@ async function main() {
       const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
       const src = mk(5, 3), at = (x, y) => [...src.slice((y * 5 + x) * 4, (y * 5 + x) * 4 + 4)];
       o.reflect = [0, 1, 4, -1, -2, 5, 6, 7, 8, -5, 11].map((i) => ee.reflectIndex(i, 5)).join();
-      o.square = [ee.squarePadding(1000, 300), ee.squarePadding(300, 1001), ee.squarePadding(40, 40)];
+      o.square = [ee.squarePadding(1000, 300), ee.squarePadding(300, 1001), ee.squarePadding(40, 40), ee.squarePadding(1500, 300, ee.MAX_PAD), ee.squarePadding(300, 1001, 512)];
       // mirror, no softening: distance d outside reads the picture's pixel d (no doubled line), and the padding may be wider than the picture
       const a = ee.extendEdges(src, 5, 3, { left: 12, right: 7, top: 4, bottom: 9, mode: 'mirror', blur: 0 });
       o.size = [a.w, a.h];
@@ -356,7 +356,7 @@ async function main() {
       try { ee.extendEdges(src, 5, 3, { left: 20000, right: 20000, top: 20000 }); o.limit = false; } catch (e) { o.limit = /megapixel/.test(e.message); }
       return o;
     })()`);
-    check('Extend edges maths: reflect indices bounce without repeating the edge, "pad to square" is centred', m.reflect === '0,1,4,1,2,3,2,1,0,3,3' && J(m.square[0]) === J({ top: 350, bottom: 350, left: 0, right: 0 }) && J(m.square[1]) === J({ left: 350, right: 351, top: 0, bottom: 0 }) && J(m.square[2]) === J({ top: 0, right: 0, bottom: 0, left: 0 }), J({ reflect: m.reflect, square: m.square }));
+    check('Extend edges maths: reflect indices bounce without repeating the edge, "pad to square" is centred', m.reflect === '0,1,4,1,2,3,2,1,0,3,3' && J(m.square[0]) === J({ top: 350, bottom: 350, left: 0, right: 0 }) && J(m.square[1]) === J({ left: 350, right: 351, top: 0, bottom: 0 }) && J(m.square[2]) === J({ top: 0, right: 0, bottom: 0, left: 0 }) && J(m.square[3]) === J({ top: 512, bottom: 512, left: 0, right: 0 }) && J(m.square[4]) === J({ left: 350, right: 351, top: 0, bottom: 0 }), J({ reflect: m.reflect, square: m.square }));
     check('Extend edges maths: mirror keeps the picture byte for byte, reads source pixel d at distance d (no doubled line), copes with padding wider than the picture, mirrors corners on both axes', J(m.size) === J([24, 16]) && m.centre && m.mirrorL && m.mirrorT && m.corner, J(m));
     check('Extend edges maths: smear repeats the edge pixels; transparent adds empty canvas', m.smearEdge && m.transparent, J({ smearEdge: m.smearEdge, transparent: m.transparent }));
     check('Extend edges maths: softening leaves the picture untouched, adds no dark/coloured fringe to a half-transparent picture, is sharper near the picture than far from it, and refuses a result over the pixel limit', m.alphaBlur.centre && m.alphaBlur.visible > 100 && m.alphaBlur.fringe === 0 && m.soft.near > 200 && m.soft.far < m.soft.near / 2 && m.limit, J({ alphaBlur: m.alphaBlur, soft: m.soft, limit: m.limit }));
@@ -378,6 +378,8 @@ async function main() {
       await __tf.extend.setParams({ top: 0, bottom: 0, left: 0, right: 0 }); o.zero = { result: !!__tf.extend.result, saveOff: q('#exSave').disabled };
       await __tf.extend.setParams({ link: true, left: 13 });
       o.link = { params: __tf.extend.params, w: __tf.extend.result?.width, h: __tf.extend.result?.height };
+      await __tf.extend.setParams({ link: false, top: 900, left: -5 }); o.capped = { top: __tf.extend.params.top, left: __tf.extend.params.left, max: q('#exControls input[type=range]').max };   // a typed number past the limit is pulled back
+      await __tf.extend.setParams({ link: true, left: 13 });
       await __tf.extend.setParams({ mode: 'transparent' });
       const tc = __tf.extend.result; o.transparent = tc && tc.getContext('2d').getImageData(0, 0, 1, 1).data[3];
       await __tf.extend.setParams({ mode: 'mirror', blur: 0.25, link: false, top: 20, bottom: 20, left: 20, right: 20 });
@@ -385,7 +387,7 @@ async function main() {
     })()`);
     check('Extend edges: opens from Tools, nothing to save until there is a padded result', r.open && r.menuClosed && r.start.saveOff && r.start.processOff && J(r.start.bounds) === J([400, 300]), J(r.start));
     check('Extend edges: "Pad to square" makes a square result with the original untouched in the middle, and enables saving', r.square.w === 400 && r.square.h === 400 && r.square.same && r.square.saveOn, J(r.square));
-    check('Extend edges: zero padding has no result to save; linked sides change together; transparent mode leaves an empty border', !r.zero.result && r.zero.saveOff && r.link.params.top === 13 && r.link.params.right === 13 && r.link.params.bottom === 13 && r.link.w === 426 && r.link.h === 326 && r.transparent === 0, J({ zero: r.zero, link: r.link, transparent: r.transparent }));
+    check('Extend edges: zero padding has no result to save; linked sides change together; transparent mode leaves an empty border', !r.zero.result && r.zero.saveOff && r.link.params.top === 13 && r.link.params.right === 13 && r.link.params.bottom === 13 && r.link.w === 426 && r.link.h === 326 && r.transparent === 0 && r.capped.top === 512 && r.capped.left === 0 && r.capped.max === '512', J({ zero: r.zero, link: r.link, transparent: r.transparent, capped: r.capped }));
     const saved = await app.ev(`__tf.extend.saveAndOpen(${J(exP)})`);
     const magic = fs.existsSync(exP) ? fs.readFileSync(exP).subarray(0, 4).toString('hex') : '';
     const after = await app.ev(`({ items: __tf.items.length, path: __tf.items[0]?.path, closed: document.querySelector('#extend').hidden })`);

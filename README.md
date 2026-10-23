@@ -46,7 +46,7 @@ Personal-use project, largely AI-written.
   main window's and last until you open another image. Space+drag pans, scroll zooms, Esc puts the tool down.
 - **Tools > Upscale image…** enlarges an *opaque* image 2×, 3× or 4× (default 4×; the models always make 4×, so 2× and 3× shrink the result afterwards) with an upscaling model (4x-UltraMix_Smooth by default, or the 4x-UltraSharpV2 DAT model) on the same
   screen as Clean image; saved as a PNG.
-- **Tools > Extend edges…** adds canvas around an image (any side, or **Pad to square**) and fills the new border from the picture itself instead of a flat colour: *Mirror* reflects the picture outward
+- **Tools > Extend edges…** adds canvas around an image (up to 512 px on any side, or **Pad to square**) and fills the new border from the picture itself instead of a flat colour: *Mirror* reflects the picture outward
   (no doubled line at the seam), *Smear* repeats the edge pixels, *Patch fill* is a content-aware fill that copies matching patches from near the edge so textures and backgrounds carry on, and *Transparent*
   adds empty canvas. A blur that grows with the distance from the picture keeps a mirror/smear fill a calm wash rather than a hard echo. Images with transparency work (except Patch fill, which needs an opaque
   image). The preview follows the controls live; a result bigger than about 1200 px is previewed at reduced size and **Process** builds the full image (needed before saving). Patch fill is slow (about

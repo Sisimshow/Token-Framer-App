@@ -22,10 +22,16 @@ export function reflectIndex(i, n) {
   return m < n ? m : period - m;
 }
 
-/** The padding (top/right/bottom/left) that makes `w` x `h` square by growing the short side, centred (an odd extra pixel goes to the end). */
-export function squarePadding(w, h) {
+/** The most the screen lets you add along any one edge, in pixels (more than this needs several outpainting steps with a generative model, not a classic fill). */
+export const MAX_PAD = 512;
+
+/**
+ * The padding (top/right/bottom/left) that makes `w` x `h` square by growing the short side, centred (an odd extra pixel goes to the end).
+ * `max` caps each side; then the result is not quite square.
+ */
+export function squarePadding(w, h, max = Infinity) {
   const d = Math.abs(w - h);
-  const a = Math.floor(d / 2), b = d - a;
+  const a = Math.min(max, Math.floor(d / 2)), b = Math.min(max, d - Math.floor(d / 2));
   return w < h ? { left: a, right: b, top: 0, bottom: 0 } : h < w ? { top: a, bottom: b, left: 0, right: 0 } : { top: 0, right: 0, bottom: 0, left: 0 };
 }
 

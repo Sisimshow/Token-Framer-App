@@ -5,7 +5,7 @@
 // The preview is live: a result up to PREVIEW_MAX px on its longest side is the real thing; a bigger one is previewed at reduced size and the full image
 // is built when Process is pressed (it asks first when very large). Saving needs the full image.
 import { fitRect } from './lib/cleanframe.js';
-import { EXTEND_DEFAULTS, MAX_EXTEND_PIXELS, PREVIEW_MAX, squarePadding } from './lib/extendedges.js';
+import { EXTEND_DEFAULTS, MAX_EXTEND_PIXELS, MAX_PAD, PREVIEW_MAX, squarePadding } from './lib/extendedges.js';
 import { PATCH_MAX_PIXELS, PATCH_SECONDS_PER_MPX } from './lib/patchfill.js';
 import { buildControls, confirmHeavy, el, makeRpc } from './ui-kit.js';
 
@@ -14,7 +14,7 @@ const SIDES = ['top', 'right', 'bottom', 'left'];
 
 const specFor = (onSquare) => [
   { t: 'subhead', label: 'Padding' },
-  ...SIDES.map((k) => ({ k, label: k[0].toUpperCase() + k.slice(1) + ' (px)', min: 0, max: 2000, step: 1, tip: `New pixels added along the ${k} edge.` })),
+  ...SIDES.map((k) => ({ k, label: k[0].toUpperCase() + k.slice(1) + ' (px)', min: 0, max: MAX_PAD, step: 1, tip: `New pixels added along the ${k} edge (at most ${MAX_PAD}: more than that needs several outpainting steps with a generative model).` })),
   { k: 'link', label: 'Link sides', t: 'check', tip: 'Changing one side changes all four.' },
   { t: 'custom', full: true, build(ctl) { const b = el('button', null, 'Pad to square'); b.title = 'Pad the short side so the result is square, centred (handy for tokens)'; b.onclick = onSquare; ctl.append(b); } },
   { t: 'subhead', label: 'Fill' },
@@ -43,7 +43,11 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
 
   const setMsg = (text, warn = false) => { const m = $('#exMsg'); m.textContent = text; m.style.color = warn ? 'var(--warn)' : ''; };
   const toCanvas = (rgba, w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0); return c; };
-  const pad = () => Object.fromEntries(SIDES.map((k) => [k, Math.max(0, Math.round(+params[k] || 0))]));
+  const pad = () => Object.fromEntries(SIDES.map((k) => [k, Math.min(MAX_PAD, Math.max(0, Math.round(+params[k] || 0)))]));
+  /** A typed number can go past the box's max: pull every side back into 0..MAX_PAD (and show it). */
+  const clampSides = () => { for (const k of SIDES) params[k] = pad()[k]; };
+  let squareShort = false;   // Pad to square was limited by MAX_PAD
+  const tail = () => (squareShort ? ` Pad to square is limited to ${MAX_PAD} px a side, so the result is not quite square.` : '');
   const outSize = () => { const p = pad(); return src ? { w: src.w + p.left + p.right, h: src.h + p.top + p.bottom } : { w: 0, h: 0 }; };
   const hasPad = () => { const p = pad(); return SIDES.some((k) => p[k] > 0); };
   const keyOf = () => JSON.stringify([pad(), params.mode, params.mode === 'mirror' || params.mode === 'smear' ? params.blur : 0, params.mode === 'patch' ? [params.patch, params.iterations, params.band, params.seed] : 0]);
@@ -199,7 +203,7 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
       g.stroke();
       g.imageSmoothingQuality = 'high'; g.drawImage(job.canvas, inner.x, inner.y, inner.w, inner.h);
       result = { canvas: c, key, w, h, full: false, inner, placeholder: true };
-      setMsg('Patch fill is made when you press Process (it can take a while). The hatched area is where the new border will go.');
+      setMsg(`Patch fill is made when you press Process (it can take a while). The hatched area is where the new border will go.${tail()}`);
       refreshButtons(); redraw();
       return;
     }
@@ -211,7 +215,7 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
       const out = await ask({ type: 'extend', params: { ...params, ...p }, scale });
       if (job !== src || req !== runReq) return;
       result = { canvas: toCanvas(out.rgba, out.w, out.h), key, w, h, full: out.scale === 1, inner: out.inner };
-      setMsg(result.full ? `${job.w}×${job.h} → ${w}×${h}. Scroll to zoom, drag to pan, double-click to reset.` : `Preview at reduced size (${out.w}×${out.h}). Press Process to build the full ${w}×${h} image, then save.`);
+      setMsg((result.full ? `${job.w}×${job.h} → ${w}×${h}. Scroll to zoom, drag to pan, double-click to reset.` : `Preview at reduced size (${out.w}×${out.h}). Press Process to build the full ${w}×${h} image, then save.`) + tail());
     } catch (err) {
       if (req === runReq) setMsg(`Could not extend the image: ${err.message}`, true);
     } finally {
@@ -232,13 +236,16 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
 
   function changed(k) {
     if (params.link && SIDES.includes(k)) for (const s of SIDES) params[s] = params[k];
+    if (SIDES.includes(k)) { squareShort = false; if (params[k] > MAX_PAD || params[k] < 0) clampSides(); }
     ui.sync();
     if (k === 'showBounds') { redraw(); return; }
     schedule();
   }
   function padToSquare() {
     if (!src) return;
-    Object.assign(params, squarePadding(src.w, src.h));
+    const sq = squarePadding(src.w, src.h, MAX_PAD), full = squarePadding(src.w, src.h);
+    Object.assign(params, sq);
+    squareShort = SIDES.some((k) => sq[k] !== full[k]);
     params.link = false;
     ui.sync(); schedule();
   }
@@ -299,7 +306,7 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
   return {
     open, close, isOpen, loadPath, saveTo,
     /** For tests: set controls (as the UI would), then wait for the fill to finish. */
-    async setParams(p) { Object.assign(params, p); if (params.link && SIDES.some((k) => k in p)) { const k = SIDES.find((s) => s in p); for (const s of SIDES) params[s] = params[k]; } ui.sync(); clearTimeout(timer); if (supersede()) return; await run(); },
+    async setParams(p) { Object.assign(params, p); clampSides(); if (params.link && SIDES.some((k) => k in p)) { const k = SIDES.find((s) => s in p); for (const s of SIDES) params[s] = params[k]; } ui.sync(); clearTimeout(timer); if (supersede()) return; await run(); },
     padToSquare,
     process: () => run(true),
     get params() { return { ...params }; },
