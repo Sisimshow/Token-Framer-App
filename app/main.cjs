@@ -85,6 +85,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 640,
     title: 'Token Framer',
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     backgroundColor: '#1b1d22',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
