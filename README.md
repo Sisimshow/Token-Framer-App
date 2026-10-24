@@ -7,7 +7,7 @@ centering on the frame's opening and manual cutout tools for pop-out tokens. The
 Personal-use project, largely AI-written.
 
 ## Download
-Windows 64-bit: take `Token-Framer-App-<version>-win-x64.zip` from the Releases page, unzip it anywhere and run `Token Framer.exe`. No install. The AI cutout downloads its model on first use; the Clean image / Upscale image tools need converted models (see `app/tools/convert-model.py`). To build the zip yourself: `node tools/make-portable.mjs` from `app` (output in `dist/`).
+Windows 64-bit: take `Token-Framer-App-<version>-win-x64.zip` from the Releases page, unzip it anywhere and run `Token Framer.exe`. No install. The AI cutout downloads its model on first use; the Clean image / Upscale image models are included in the zip (personal use; recheck their licences before making the repo public). To build the zip yourself: `node tools/make-portable.mjs` from `app` (output in `dist/`).
 
 ## Run from source
 1. `npm install` once in the `app` folder. If `node_modules\electron\dist` is missing afterwards, run `node node_modules\electron\install.js` (also from `app`).

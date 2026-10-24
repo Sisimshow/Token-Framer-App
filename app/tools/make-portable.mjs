@@ -30,7 +30,7 @@ mkdirSync(res, { recursive: true });
 for (const f of ['main.cjs', 'modelrun.cjs', 'preload.cjs', 'LICENSE']) cpSync(join(app, f), join(res, f));
 for (const d of ['renderer', 'assets']) cpSync(join(app, d), join(res, d), { recursive: true });
 mkdirSync(join(res, 'models'));
-for (const f of readdirSync(join(app, 'models'))) if (f.endsWith('.json')) cpSync(join(app, 'models', f), join(res, 'models', f)); // scale/size rules; the .onnx files are not shipped
+for (const f of readdirSync(join(app, 'models'))) if (f.endsWith('.json') || f.endsWith('.onnx')) cpSync(join(app, 'models', f), join(res, 'models', f)); // scale/size rules plus the converted models found here (gitignored; licences unchecked: fine while the repo is private, recheck before it goes public)
 writeFileSync(join(res, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, description: pkg.description, main: pkg.main, license: pkg.license, author: pkg.author }, null, 2));
 
 // runtime dependency: onnxruntime-node (Windows x64 only) + onnxruntime-common
@@ -43,7 +43,7 @@ for (const os of readdirSync(napi)) {
   for (const arch of readdirSync(join(napi, os))) if (arch !== 'x64') rmSync(join(napi, os, arch), { recursive: true, force: true });
 }
 
-writeFileSync(join(dir, 'README.txt'), `Token Framer ${pkg.version}\r\n\r\nDouble-click "Token Framer.exe". No install needed; delete the folder to remove the program.\r\nSettings are kept in %APPDATA%\${pkg.name}.\r\nThe AI cutout downloads its model (RMBG-2.0, about 0.5 GB, non-commercial licence) the first time you use it.\r\nThe Clean image / Upscale image tools need converted .onnx models placed in resources\app\models (see the project README).\r\n`);
+writeFileSync(join(dir, 'README.txt'), `Token Framer ${pkg.version}\r\n\r\nDouble-click "Token Framer.exe". No install needed; delete the folder to remove the program.\r\nSettings are kept in %APPDATA%\\${pkg.name}.\r\nThe AI cutout downloads its model (RMBG-2.0, about 0.5 GB, non-commercial licence) the first time you use it.\r\nThe Clean image / Upscale image models are in resources\\app\\models (personal use).\r\n`);
 
 const zip = join(dist, `${name}.zip`);
 // Windows' own bsdtar (a GNU tar earlier on PATH cannot write zips and reads "F:\..." as a remote host); relative names, run inside dist
