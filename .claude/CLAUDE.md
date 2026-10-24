@@ -130,6 +130,10 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
 - RMBG-2.0 download: pinned revision `MODEL_REV` and `MODEL_SHA256` (checked while streaming, and for a hand-picked file); one download at a time (`downloading`).
 - Model runs (`models:clean`) run one at a time (`cleanQueue`), sessions are cached as promises, and a run needing more than half the RAM is refused (a strip-based
   engine would lift that; not done).
+  **Deferred, only if the refusal is ever hit (the user decided to wait):** estimate is about 12 B/input px + 20 B/output px because the float blend buffers cover the whole output.
+  Plan: run `modelrun.cjs` in horizontal bands of tile rows, keep float accumulators only for the current band plus the overlap rows shared with the next, convert each finished
+  band to 8-bit into the final image (about 4 B/output px), then relax the refusal and the 100 Mpx stop. Must stay byte-identical to the current output (tile 512, overlap 32,
+  feather 32 * scale; checked against ComfyUI to 1 LSB): test band vs whole output with the fake models on several sizes before trusting it.
 - `state.base.item` is the item the bitmap belongs to: tools and AI remove refuse to act until it is the selected item. `setItems` takes the new items' overrides from
   the store after flushing the outgoing ones.
 - Saves (`saveCurrent`, `frameAll`, `zipAll`) work from `exportSnapshot()` (shared settings, per-item overrides, size, format, quality, frame, output paths) taken when
