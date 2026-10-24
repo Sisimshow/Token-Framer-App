@@ -1042,6 +1042,61 @@ async function main() {
       check('Exact pen view: with the pen in hand every source pixel is an identical k x k block of screen pixels, at three zoom steps and several pan offsets', got.every((m) => m.k >= 1 && J(m.rows) === J([m.k]) && J(m.cols) === J([m.k])) && ks.length === 3, J(got));
     }
 
+    // review fixes (group 1): reopening keeps the last edit; edits wait for the selected image's own picture; two images with the same output name are not both saved
+    {
+      const aP = path.join(work, 'Dup.png'), bP = path.join(work, 'Dup.jpg'), cP = path.join(work, 'Other.png'), dupOut = path.join(work, 'Dup Token.webp');
+      fs.rmSync(dupOut, { force: true });
+      const g = await app.ev(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const o = {};
+        const mk = async (p, col, w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.fillStyle = col; x.fillRect(0, 0, w, h); x.fillStyle = '#fff'; x.fillRect(w / 4, h / 4, w / 2, h / 2);
+          await window.api.writeFile(p, new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer())); };
+        await mk(${J(aP)}, '#c33', 300, 200); await mk(${J(bP)}, '#33c', 300, 200); await mk(${J(cP)}, '#3c3', 2400, 1800);
+        // reopen within the save delay: the edit made just before must survive
+        await __tf.openImages([${J(aP)}]); await wait(500);
+        __tf.pushEdit({ type: 'rect', x0: 10, y0: 10, x1: 40, y1: 40 });
+        await __tf.openImages([${J(aP)}]); await wait(300);
+        o.reopen = __tf.items[0].override.popEdits?.length || 0;
+        // a tool click while the next image is still loading is refused (not applied to it in the old picture's coordinates)
+        await __tf.openImages([${J(aP)}, ${J(cP)}]); await wait(600);
+        if (__tf.tool !== 'wand') __tf.setTool('wand');
+        const v = document.querySelector('#view'), r = v.getBoundingClientRect();
+        const loading = __tf.selectItem(1);
+        v.dispatchEvent(new PointerEvent('pointerdown', { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, bubbles: true, pointerId: 1 }));
+        v.dispatchEvent(new PointerEvent('pointerup', { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, bubbles: true, pointerId: 1 }));
+        o.blockedMsg = document.querySelector('#status').textContent;
+        await loading; await wait(300);
+        o.blocked = __tf.items[1].override.popEdits?.length || 0;
+        __tf.setTool('wand');
+        // Save all: "Dup.png" and "Dup.jpg" both make "Dup Token.webp": only the first is saved, the second is flagged
+        await __tf.openImages([${J(aP)}, ${J(bP)}]); await wait(600);
+        await __tf.frameAll();
+        o.dup = __tf.items.map((i) => i.tag);
+        return o;
+      })()`);
+      const dupBytes = fs.existsSync(dupOut) ? fs.statSync(dupOut).size : 0;
+      check('Review fixes: reopening an image right after an edit keeps the edit', g.reopen >= 1, J(g));
+      check('Review fixes: a tool click while the selected image is still loading is refused, nothing lands on it', g.blocked === 0 && /not loaded yet/.test(g.blockedMsg), J({ blocked: g.blocked, msg: g.blockedMsg }));
+      check('Review fixes: Save all does not save two images to the same output file (the second is flagged)', g.dup[0] === 'saved' && /same output file/.test(g.dup[1]) && dupBytes > 0, J({ dup: g.dup, dupBytes }));
+      await app.ev(`__tf.openImages([${J(art)}])`); await sleep(600);
+    }
+    // the Upscale screen: a resize still running when another image is loaded must not install the previous image's result under the new name
+    if (fs.existsSync(path.join(root, 'models', '4x-UltraMix_Smooth.onnx'))) {
+      const oneP = path.join(work, 'Up one.png'), twoP = path.join(work, 'Up two.png');
+      const u = await app.ev(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const mk = async (p, col) => { const c = document.createElement('canvas'); c.width = 160; c.height = 120; const x = c.getContext('2d'); x.fillStyle = col; x.fillRect(0, 0, 160, 120); x.fillStyle = '#000'; x.fillRect(40, 30, 80, 60);
+          await window.api.writeFile(p, new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer())); };
+        await mk(${J(oneP)}, '#e44'); await mk(${J(twoP)}, '#4e4');
+        await __tf.imgclean.open('upscale'); await __tf.imgclean.loadPath(${J(oneP)}); await __tf.imgclean.process();
+        const pending = __tf.imgclean.setScale(2);          // resize of image one's result, not awaited
+        await __tf.imgclean.loadPath(${J(twoP)});           // image two arrives meanwhile
+        await pending; await wait(300);
+        const o = { cleaned: !!__tf.imgclean.cleaned, saveOff: document.querySelector('#icSave').disabled };
+        __tf.imgclean.close(); return o;
+      })()`);
+      check('Review fixes: an upscale resize still running when another image is loaded does not install the old result', !u.cleaned && u.saveOff, J(u));
+    } else console.log('SKIP  Review fix (upscale race): models/4x-UltraMix_Smooth.onnx not found');
+
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
@@ -1140,7 +1195,7 @@ async function main() {
   await sleep(800);
   const editsFile = path.join(userData, 'edits.json');
   const edits = JSON.parse(fs.readFileSync(editsFile, 'utf8'));
-  edits[Object.keys(edits)[0]].w = 123; // pretend it was saved for a different-size image
+  edits[Object.keys(edits).find((k) => k === art.toLowerCase())].w = 123; // pretend it was saved for a different-size image (the test art's entry: other checks leave edits on other files)
   fs.writeFileSync(editsFile, J(edits));
   await app.launch();
   await app.ev(`__tf.openImages([${J(art)}])`);

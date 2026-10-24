@@ -101,7 +101,7 @@ export function initImageCleaner({ api, openImages, dirOf, sepOf, baseOf }) {
       let opaque = true;
       for (let i = 3; i < d.data.length; i += 4) if (d.data[i] !== 255) { opaque = false; break; }
       src = { path: p, name: baseOf(p), w: c.width, h: c.height, rgba: d.data, canvas: c, opaque };
-      cleanedCanvas = null; info = null; resetView();
+      cleanedCanvas = null; info = null; raw = null; applyReq++; resetView();   // the old result (and a resize of it still running) belongs to the previous image
       const label = $('#icName');
       label.textContent = p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) + 1);
       label.title = p; label.classList.remove('muted');

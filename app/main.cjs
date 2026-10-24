@@ -3,6 +3,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const modelrun = require('./modelrun.cjs');
+const { pipeline } = require('stream/promises');
+const { Readable, Transform } = require('stream');
 
 const IMG_EXT = /\.(webp|png|jpe?g|bmp|gif|tiff?|avif)$/i;
 const EXT_RANK = { '.webp': 0, '.png': 1, '.jpg': 2, '.jpeg': 2 };
@@ -111,7 +113,8 @@ ipcMain.handle('fs:write', async (_e, p, bytes) => {
 });
 // ---------------------------------------------------------------- image cleanup models (1x ESRGAN-type, converted with tools/convert-model.py)
 const modelDir = () => path.join(__dirname, 'models');
-const cleanSessions = new Map(); // model name -> { session, provider }
+const cleanSessions = new Map(); // model name -> Promise of { session, ort, provider } (the promise, so two screens asking at once share one load)
+let cleanQueue = Promise.resolve(); // model runs one at a time: each holds full-size buffers
 const MAX_OUTPUT_PIXELS = 100e6;  // the hard stop (about 10000 x 10000); the renderer asks for confirmation well before this (HEAVY_PIXELS in ui-kit.js)
 
 /** Models in the models folder with what the converter wrote next to each (scale and size rules); an .onnx without that file is taken to be a 1x model needing multiples of 4. */
@@ -125,27 +128,35 @@ function listCleanModels() {
     });
   } catch { return []; }
 }
-async function getCleanSession(name) {
+function getCleanSession(name) {
   if (cleanSessions.has(name)) return cleanSessions.get(name);
-  const model = listCleanModels().find((m) => m.name === name); // only files that are really in the models folder
-  if (!model) throw new Error(`The model "${name}" is not in the models folder.`);
-  const ort = require('onnxruntime-node');
-  for (const ep of ['dml', 'cpu']) {
-    try {
-      const session = await ort.InferenceSession.create(path.join(modelDir(), model.file), { executionProviders: [ep] });
-      const entry = { session, ort, provider: ep === 'dml' ? 'GPU (DirectML)' : 'CPU' };
-      cleanSessions.set(name, entry);
-      return entry;
-    } catch (err) {
-      console.warn(`onnxruntime provider ${ep} failed for ${name}:`, err.message);
+  const job = (async () => {
+    const model = listCleanModels().find((m) => m.name === name); // only files that are really in the models folder
+    if (!model) throw new Error(`The model "${name}" is not in the models folder.`);
+    const ort = require('onnxruntime-node');
+    for (const ep of ['dml', 'cpu']) {
+      try {
+        const session = await ort.InferenceSession.create(path.join(modelDir(), model.file), { executionProviders: [ep] });
+        return { session, ort, provider: ep === 'dml' ? 'GPU (DirectML)' : 'CPU' };
+      } catch (err) {
+        console.warn(`onnxruntime provider ${ep} failed for ${name}:`, err.message);
+      }
     }
-  }
-  throw new Error(`Could not load the model "${name}".`);
+    throw new Error(`Could not load the model "${name}".`);
+  })();
+  cleanSessions.set(name, job);
+  job.catch(() => cleanSessions.delete(name)); // a failed load can be tried again
+  return job;
 }
 
 ipcMain.handle('models:list', async () => listCleanModels());
 /** rgba: straight RGBA bytes. The model sees RGB only; the alpha channel is returned unchanged. */
-ipcMain.handle('models:clean', async (e, name, rgba, w, h, reqId) => { // reqId comes back on every progress event so each screen can tell its own job apart
+ipcMain.handle('models:clean', (e, ...args) => { // queued: two screens running models at once would hold two sets of full-size buffers
+  const job = cleanQueue.then(() => runClean(e, ...args));
+  cleanQueue = job.catch(() => {});
+  return job;
+});
+async function runClean(e, name, rgba, w, h, reqId) { // reqId comes back on every progress event so each screen can tell its own job apart
   if (!(rgba instanceof Uint8Array) || !Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || rgba.length !== w * h * 4) throw new Error('Unexpected image data.');
   const { session, ort, provider } = await getCleanSession(name);
   const meta = listCleanModels().find((m) => m.name === name);
@@ -156,7 +167,7 @@ ipcMain.handle('models:clean', async (e, name, rgba, w, h, reqId) => { // reqId 
   };
   const t = Date.now();
   let last = 0;
-  const onProgress = (done, total) => { if (Date.now() - last > 100 || done === total) { last = Date.now(); e.sender.send('models:progress', { done, total, id: reqId }); } };
+  const onProgress = (done, total) => { if (!e.sender.isDestroyed() && (Date.now() - last > 100 || done === total)) { last = Date.now(); e.sender.send('models:progress', { done, total, id: reqId }); } };
   // like ComfyUI, retry with smaller tiles if the GPU runs out of memory
   let result = null;
   for (const tile of [512, 256, 128]) {
@@ -169,7 +180,7 @@ ipcMain.handle('models:clean', async (e, name, rgba, w, h, reqId) => { // reqId 
     }
   }
   return { rgba: result.rgba, w: result.w, h: result.h, scale: meta.scale, ms: Date.now() - t, provider };
-});
+}
 
 ipcMain.handle('app:defaultFrame', async () => path.join(__dirname, 'assets', 'default.webp'));
 ipcMain.handle('fs:exists', async (_e, p) => fs.existsSync(p));
@@ -204,32 +215,36 @@ const modelReady = () => {
 
 ipcMain.handle('ai:status', async () => ({ ready: modelReady(), sizeMB: Math.round(MODEL_SIZE / 1e6), provider: ortProvider }));
 
-ipcMain.handle('ai:download', async (e) => {
+let downloading = null; // the download in progress: a second request (another screen) shares it instead of writing the same .part file
+ipcMain.handle('ai:download', (e) => {
+  if (!downloading) downloading = downloadModel(e.sender).finally(() => { downloading = null; });
+  return downloading;
+});
+async function downloadModel(sender) {
   const dest = modelFile();
   const part = `${dest}.part`;
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const res = await net.fetch(MODEL_URL);
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const total = Number(res.headers.get('content-length')) || MODEL_SIZE;
-  const out = fs.createWriteStream(part);
-  let got = 0;
-  let last = 0;
-  try {
-    for await (const chunk of res.body) {
-      if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
+  let got = 0, last = 0;
+  const progress = new Transform({
+    transform(chunk, _enc, cb) {
       got += chunk.length;
-      if (Date.now() - last > 200) { last = Date.now(); e.sender.send('ai:progress', { got, total }); }
+      if (Date.now() - last > 200 && !sender.isDestroyed()) { last = Date.now(); sender.send('ai:progress', { got, total }); }
+      cb(null, chunk);
     }
-    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+  });
+  try {
+    await pipeline(Readable.fromWeb(res.body), progress, fs.createWriteStream(part)); // a disk-full or permission error rejects here instead of crashing the app
     if (fs.statSync(part).size !== MODEL_SIZE) throw new Error('The downloaded model file has the wrong size.');
   } catch (err) {
-    out.destroy();
     fs.rmSync(part, { force: true });
     throw err;
   }
   fs.renameSync(part, dest);
   return true;
-});
+}
 
 // Fallback when the download is blocked: copy a model_fp16.onnx the user already has into place.
 ipcMain.handle('ai:chooseModel', async () => {

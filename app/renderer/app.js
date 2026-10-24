@@ -971,6 +971,8 @@ function livePenPath(to) {
 }
 
 function toolDown(e) {
+  // the picture on screen must be the selected image's own: while another one is still loading (or failed to load) an edit would land on it in the wrong coordinates
+  if (!state.base || state.base.item !== curItem()) { setStatus(`${curItem()?.name || 'The image'} is not loaded yet, so it cannot be edited.`, true); return; }
   const p = srcPoint(e);
   if (!p) return;
   state.tdown = true;
@@ -1283,6 +1285,7 @@ async function setItems(items, skipped = 0) {
 }
 
 async function openFolder(dir) {
+  flushEdits(); // pending edits go into the store before the new items copy theirs from it (reopening an image must keep its last edit)
   const r = await api.listImages(dir);
   state.lastDir = dir;
   const names = new Set(r.names);
@@ -1299,6 +1302,7 @@ async function openFolder(dir) {
 
 async function openImages(paths) {
   if (!paths.length) return;
+  flushEdits(); // pending edits go into the store before the new items copy theirs from it (reopening an image must keep its last edit)
   state.lastDir = dirOf(paths[0]);
   const items = [];
   for (const p of paths) {
@@ -1328,7 +1332,7 @@ async function selectItem(i) {
     it.dims = { w: bitmap.width, h: bitmap.height };
     persistEdits();
     state.base?.bitmap.close?.();
-    state.base = { path: it.path, bitmap };
+    state.base = { path: it.path, bitmap, item: it };
     state.cut = null;
     snapPenZoom();
     applyView();
@@ -1468,10 +1472,14 @@ async function frameAll() {
   prog.max = todo.length;
   $('#btnFrameAll').disabled = true;
   let ok = 0, fail = 0;
+  const claimed = new Map(); // output path (lower case) -> the image saving to it: e.g. "Goblin.png" and "Goblin.jpg" both make "Goblin Token.webp"
   for (let n = 0; n < todo.length; n++) {
     const it = todo[n];
     prog.value = n;
     setStatus(`Framing ${n + 1}/${todo.length}: ${it.base}`);
+    const key = it.outPath.toLowerCase(), first = claimed.get(key);
+    if (first) { it.tag = `error: same output file as ${first.name}`; fail++; updateTile(state.items.indexOf(it)); continue; }
+    claimed.set(key, it);
     try {
       await writeItem(it, it.outPath);
       ok++;
