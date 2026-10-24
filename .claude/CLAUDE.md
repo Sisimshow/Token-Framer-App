@@ -17,7 +17,7 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   (`Runtime.evaluate`, `Input.dispatchMouseEvent`, `Page.captureScreenshot`). `window.__tf` exposes the app state and a few
   functions for this.
 
-- Release: `node tools/make-portable.mjs` (from `app/`) builds `dist/Token-Framer-App-<version>-win-x64.zip` (gitignored): Electron runtime renamed `Token Framer.exe`, the app unpacked in `resources/app` (no asar, so `models/` stays a real folder), only Windows x64 onnxruntime binaries, no .onnx models, no dev files. Bump `version` in `package.json` (and `package-lock.json`), build, then `gh release create v<version> <zip>`. Builds fail with EPERM if Defender is scanning the fresh exe; the script retries.
+- Release: `node tools/make-portable.mjs` (from `app/`) builds `dist/Token-Framer-App-<version>-win-x64.zip` (gitignored): Electron runtime renamed `Token Framer.exe`, the app unpacked in `resources/app` (no asar, so `models/` stays a real folder), only Windows x64 onnxruntime binaries, no .onnx models, no dev files. Bump `version` in `package.json` (and `package-lock.json`), build, then `gh release create v<version> <zip>`. The exe gets the icon and version info from `rcedit` (dev dependency, approved for this). Builds fail with EPERM if Defender is scanning the fresh exe; the script retries.
 - Regression harness: `node tools/test.mjs` (Node 22+, no deps) runs the app over CDP and checks golden composites,
   cutout tools, edit persistence and folder rules. `--update` rewrites `tools/fixtures/golden-*.png`; only do that on purpose.
 

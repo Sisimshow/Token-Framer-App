@@ -5,6 +5,7 @@ import { cpSync, rmSync, mkdirSync, readFileSync, writeFileSync, renameSync, rea
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { rcedit } from 'rcedit'; // dev dependency: writes the icon and version info into the exe
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(app, '..');
@@ -19,6 +20,11 @@ mkdirSync(dist, { recursive: true });
 cpSync(join(app, 'node_modules', 'electron', 'dist'), dir, { recursive: true });
 renameSync(join(dir, 'electron.exe'), join(dir, 'Token Framer.exe'));
 rmSync(join(dir, 'resources', 'default_app.asar'), { force: true });
+await rcedit(join(dir, 'Token Framer.exe'), {
+  icon: join(app, 'assets', 'icon.ico'),
+  'version-string': { ProductName: 'Token Framer', FileDescription: 'Token Framer', CompanyName: pkg.author, LegalCopyright: `MIT, ${pkg.author}`, OriginalFilename: 'Token Framer.exe', InternalName: 'Token Framer' },
+  'file-version': pkg.version, 'product-version': pkg.version,
+});
 
 mkdirSync(res, { recursive: true });
 for (const f of ['main.cjs', 'modelrun.cjs', 'preload.cjs', 'LICENSE']) cpSync(join(app, f), join(res, f));

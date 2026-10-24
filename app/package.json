@@ -14,7 +14,8 @@
     "start": "electron ."
   },
   "devDependencies": {
-    "electron": "^44.9.0"
+    "electron": "^44.9.0",
+    "rcedit": "^5.0.2"
   },
   "dependencies": {
     "onnxruntime-node": "^1.30.0"
