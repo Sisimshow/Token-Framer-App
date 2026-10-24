@@ -27,7 +27,9 @@ class App {
   async launch() {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    this.proc = spawn(electron, ['.', `--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`], { cwd: root, env, stdio: 'ignore' });
+    // TF_TEST_SCALE=1.25 runs the app as on a Windows display scaled to 125% (the pen view counts device pixels)
+    const scaleArg = process.env.TF_TEST_SCALE ? [`--force-device-scale-factor=${process.env.TF_TEST_SCALE}`] : [];
+    this.proc = spawn(electron, ['.', `--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`, ...scaleArg], { cwd: root, env, stdio: 'ignore' });
     let target;
     for (let i = 0; i < 100 && !target; i++) {
       await new Promise((r) => setTimeout(r, 200));
@@ -865,7 +867,7 @@ async function main() {
         rows.push({ diagonal: J(pts) === J(Array.from({ length: 7 }, (_, i) => [MX - 4 + i, MY - 4 + i])), pts });
       }
       await app.ev(`(() => { document.querySelector('#view').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); __tf.setTool('brush'); __tf.shared.brushSize = 40; __tf.ui.showCutout = false; return 1; })()`);
-      const ok = rows.length === 3 && rows.slice(0, 2).every((r) => r.probes && r.ring && r.shaky && r.shaky.length === 1 && r.shaky[0][0] === MX && r.shaky[0][1] === MY) && rows[1].z === 20 && rows[2].diagonal;
+      const ok = rows.length === 3 && rows.slice(0, 2).every((r) => r.probes && r.ring && r.shaky && r.shaky.length === 1 && r.shaky[0][0] === MX && r.shaky[0][1] === MY) && rows[1].z > 15 && rows[2].diagonal;   // the top zoom step is snapped to whole device pixels per source pixel with the pen in hand (just under 20x)
       check('Main window pen with real mouse input: zoom reaches 20x; at high zoom the pixel shown under the pointer is the one erased up to its edges (just outside takes the neighbour), a shaky click is one pixel, the square frames the drawn pixel, a staircase drag is a clean diagonal', ok, J(rows));
     }
     // pixel-perfect 1 px pen: a hand-drawn diagonal passes through side neighbours at every corner (an L, which reads as a 2 px thick line); those corner pixels are dropped
@@ -950,6 +952,76 @@ async function main() {
       const row = await app.ev(`(() => { const g = __tf.bgremove.result.getContext('2d').getImageData(${MX - 2}, ${MY}, 16, 1).data, o = []; for (let i = 0; i < 16; i++) o.push(g[i * 4 + 3] === 0 ? 1 : 0); return o.join(''); })()`);
       await app.ev(`(__tf.bgremove.setTool('brush'), __tf.bgremove.close(), 1)`);
       check('Pen feedback in the Remove background screen: true-size square, native cursor hidden, zoomed-out message, and the stroke ends where the button was let go', bfit.pen && bfit.w < 1.2 && bfit.cursor === 'none' && /Zoomed out/.test(bfit.msg) && bpx >= 3 && row === '0011111111110000', J({ bfit, bpx, row }));
+    }
+
+    // the exact pen view's compositing: rendering only a window of the composite (every layer canvas window-sized and shifted) gives the same pixels as cropping
+    // the full composite, with every layer kind on (custom mask, hole mask, tint, overlay, pop-out with its highlight, background colour), windows inside and across the edge
+    {
+      const cp = await app.ev(`(async () => {
+        const C = await import('./lib/composite.js');
+        const mk = (w, h, f) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); const d = x.createImageData(w, h);
+          for (let y = 0; y < h; y++) for (let i = 0; i < w; i++) { const p = (y * w + i) * 4, v = f(i, y); d.data[p] = v[0]; d.data[p + 1] = v[1]; d.data[p + 2] = v[2]; d.data[p + 3] = v[3]; } x.putImageData(d, 0, 0); return c; };
+        const R = (x, y) => Math.hypot(x - 128, y - 128);
+        const base = mk(300, 200, (x, y) => [(x * 7) & 255, (y * 5) & 255, (x * y) & 255, 255]);
+        const frame = mk(256, 256, (x, y) => [200, 150, 60, R(x, y) > 100 && R(x, y) < 124 ? 255 : 0]);
+        const overlay = mk(256, 256, (x, y) => [x, y, 128, (x + y) % 64 < 32 ? 180 : 0]);
+        const mask = mk(256, 256, (x, y) => { const v = R(x, y) < 100 ? 255 : R(x, y) < 120 ? 128 : 0; return [v, v, v, 255]; });
+        const hole = mk(256, 256, (x, y) => [255, 255, 255, R(x, y) < 105 ? 255 : 0]);
+        const cfg = { baseScale: 0.8, baseOffsetX: 13.3, baseOffsetY: -7.7, maskShape: 'circle', maskRadius: 0.95, frameScale: 1, frameOffsetX: 3, frameOffsetY: -2, frameTintColor: '#88aaff', overlayTintColor: '#ff8800',
+          overlayOpacity: 0.7, frameOpacity: 0.9, bgEnabled: true, bgColor: '#203040', popOutEnabled: true, popOutDegrees: 120, popOutRotation: 10 };
+        // 'plain' has no antialiased path (no shape clip, no wedge): it must match exactly; the others may differ by a few levels on the anti-aliased edge of a clip path
+        const variants = { plain: [{}, { ...cfg, maskShape: 'none', popOutEnabled: false }], mask: [{ mask }, cfg], hole: [{ holeMask: hole }, { ...cfg, maskShape: 'hole' }], circle: [{}, cfg] };
+        const out = [];
+        for (const size of [1000, 999.37]) for (const [name, [extra, c]] of Object.entries(variants)) {
+          const src = { base, popBase: base, frame, overlay, ...extra };
+          const opts = { crisp: true, snapArt: true, highlightPopOut: true };
+          const full = C.compositeImage(src, c, size, opts), fx = full.getContext('2d');
+          for (const win of [{ x: 130, y: 270, w: 300, h: 300 }, { x: 850, y: -40, w: 300, h: 260 }]) {
+            const a = fx.getImageData(win.x, win.y, win.w, win.h).data, b = C.compositeImage(src, c, size, { ...opts, view: win }).getContext('2d').getImageData(0, 0, win.w, win.h).data;
+            let max = 0, over1 = 0; for (let i = 0; i < a.length; i++) { const d = Math.abs(a[i] - b[i]); if (d > max) max = d; if (d > 1) over1++; }
+            out.push({ size, name, x: win.x, max, over1, n: a.length });
+          }
+        }
+        return out;
+      })()`);
+      check('Exact pen view compositing: a window of the composite equals the same crop of the full composite (mask, hole, tint, overlay, pop-out, background; whole and fractional sizes; a window across the edge)', cp.length === 16 && cp.every((r) => (r.name === 'plain' ? r.max <= 2 && r.over1 <= 2 : r.max <= 8 && r.over1 <= r.n * 0.001)), J(cp));
+    }
+
+    // the exact pen view in the main window: with the pen in hand the zoom steps through whole numbers of device pixels per source pixel, and EVERY source pixel is then
+    // drawn as an identical k x k block (measured as runs of equal colour in #preview's own pixels), at several zoom steps and pan offsets
+    {
+      const markP = path.join(work, 'Marker.png');
+      // (the default frame, open in the middle: a frame an earlier check left loaded may cover the art there)
+      const prevFrame = await app.ev(`__tf.frame.path`);
+      await app.ev(`(async () => { await __tf.loadFrame(await window.api.defaultFramePath()); await __tf.openImages([${J(markP)}]); await new Promise((r) => setTimeout(r, 1200)); __tf.shared.brushSize = 1; __tf.shared.brushMode = 'erase'; if (__tf.tool !== 'brush') __tf.setTool('brush'); return 1; })()`);
+      const vr = await app.ev(`(() => { const r = document.querySelector('#view').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vr.x, y: vr.y, buttons: 0 });
+      const measure = () => app.ev(`(() => { const c = document.querySelector('#preview'), W = c.width, H = c.height, g = c.getContext('2d').getImageData(0, 0, W, H).data;
+        const px = (x, y) => { const i = (y * W + x) * 4; return (g[i] << 16) | (g[i + 1] << 8) | g[i + 2]; };
+        const runs = (get, n) => { const o = []; let len = 1; for (let i = 1; i < n; i++) { if (get(i) === get(i - 1)) len++; else { o.push(len); len = 1; } } o.push(len); return o.slice(1, -1); };
+        const set = (a) => [...new Set(a)].sort((p, q) => p - q);
+        const rows = [], cols = [];
+        for (const f of [0.3, 0.5, 0.7]) { rows.push(...runs((x) => px(x, Math.floor(H * f)), W)); cols.push(...runs((y) => px(Math.floor(W * f), y), H)); }
+        return { k: __tf.penK(), z: +__tf.view.z.toFixed(3), W, dpr: devicePixelRatio, rows: set(rows), cols: set(cols), exact: __tf.exact, tool: __tf.tool, bs: __tf.eff().brushSize, cut: __tf.ui.showCutout, pv: __tf.ui.pixelView, over: Object.keys(__tf.items[__tf.cur].override) };
+      })()`);
+      const pan = async (dx, dy) => {
+        await app.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: vr.x, y: vr.y, button: 'middle', buttons: 4, clickCount: 1 });
+        await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vr.x + dx / 2, y: vr.y + dy / 2, button: 'middle', buttons: 4 });
+        await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vr.x + dx, y: vr.y + dy, button: 'middle', buttons: 4 });
+        await app.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: vr.x + dx, y: vr.y + dy, button: 'middle', buttons: 0, clickCount: 1 });
+        await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vr.x, y: vr.y, buttons: 0 });
+      };
+      const got = [];
+      for (const notches of [3, 4, 5]) {
+        for (let i = 0; i < notches; i++) { await app.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: vr.x, y: vr.y, deltaX: 0, deltaY: -100 }); await sleep(150); }
+        await sleep(500);
+        got.push(await measure());
+        await pan(-37.3, -23.6); await sleep(500); got.push(await measure());
+        await pan(51.1, 19.4); await sleep(500); got.push(await measure());
+      }
+      await app.ev(`(async () => { document.querySelector('#view').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); __tf.setTool('brush'); __tf.shared.brushSize = 40; await __tf.loadFrame(${J(prevFrame)}); return 1; })()`);
+      const ks = [...new Set(got.map((m) => m.k))];
+      check('Exact pen view: with the pen in hand every source pixel is an identical k x k block of screen pixels, at three zoom steps and several pan offsets', got.every((m) => m.k >= 1 && J(m.rows) === J([m.k]) && J(m.cols) === J([m.k])) && ks.length === 3, J(got));
     }
 
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);

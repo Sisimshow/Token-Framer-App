@@ -362,6 +362,7 @@ function setKey(c, k, v) {
     if (curItem()) delete curItem().override[k];
   }
   if (k === 'format') refreshOutPaths();
+  if (k === 'brushSize') { snapPenZoom(); applyView(); }
   if (k === 'overwrite') {
     for (const it of state.items) if (it.exists) it.selected = v;
     refreshGrid();
@@ -546,8 +547,9 @@ async function renderPreview() {
   const cv = previewBuffer();
   const ctx = cv.getContext('2d');
   if (!state.frame || !state.base) {
-    if (cv.width !== PREVIEW) { cv.width = PREVIEW; cv.height = PREVIEW; }
+    if (cv.width !== PREVIEW || cv.height !== PREVIEW) { cv.width = PREVIEW; cv.height = PREVIEW; }
     state.crispShown = false;
+    state.exact = null; state.prevFor = null; state.prevBufRect = { x0: 0, y0: 0, s: 1 };   // the placeholder is a whole-composite buffer, not an exact pen window
     ctx.clearRect(0, 0, PREVIEW, PREVIEW);
     ctx.fillStyle = '#9097a5';
     ctx.font = '22px Segoe UI, sans-serif';
@@ -560,13 +562,39 @@ async function renderPreview() {
   await ensureAssets(cfg);
   if (tok !== renderTok) return;
   const cut = hasCutout(cfg) || state.stroke ? previewCut(cfg) : null;
+  const k = penExactK();
+  if (k) {
+    // the exact pen view: only the window on screen is composited, at the screen's own device pixels, with the art on whole pixels; the zoom is snapped so each
+    // source pixel is exactly k x k device pixels (snapPenZoom). The pen's pointer mapping and square use the same numbers (state.exact).
+    const v = state.view, dpr = window.devicePixelRatio || 1, D = viewDevice(), S = D * v.z, bm = state.base.bitmap;
+    const ox = Math.round(-v.x * dpr), oy = Math.round(-v.y * dpr), br = baseRect(resolveCfg(cfg, bm), bm, S);
+    state.crispShown = true;
+    $('#view').classList.toggle('pixel', true);
+    if (cv.width !== D || cv.height !== D) { cv.width = D; cv.height = D; }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, D, D);
+    state.exact = { S, k, bx: Math.round(br.x), by: Math.round(br.y) };
+    if (state.ui.showCutout) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(cut ? cut.canvas : bm, state.exact.bx - ox, state.exact.by - oy, k * bm.width, k * bm.height);
+    } else {
+      ctx.drawImage(compositeFor(cfg, buildSources(cfg, bm, cut), S, { highlightPopOut: state.ui.popOutPreview, crisp: true, snapArt: true, view: { x: ox, y: oy, w: D, h: D } }), 0, 0);
+    }
+    state.prevBufRect = { x0: ox / S, y0: oy / S, s: D / S };
+    state.prevFor = { exact: true, x: v.x, y: v.y, z: v.z, D };
+    blitPreview();
+    return;
+  }
+  state.exact = null;
   // pixel view renders at 2x so each source pixel is a visible block when zoomed, drawn without smoothing
   const crisp = !!state.ui.pixelView || penCrisp();
   state.crispShown = crisp;                       // the pen's pointer mapping and square follow exactly this drawing (see penAnchorAt)
   $('#view').classList.toggle('pixel', crisp);
   const size = previewSize();
-  if (cv.width !== size) { cv.width = size; cv.height = size; }
+  if (cv.width !== size || cv.height !== size) { cv.width = size; cv.height = size; }
   ctx.clearRect(0, 0, size, size);
+  state.prevBufRect = { x0: 0, y0: 0, s: 1 };
+  state.prevFor = { exact: false, size, crisp };
   if (state.ui.showCutout) {
     // the cutout alone, same placement as in the token, over the checkerboard
     const bitmap = state.base.bitmap;
@@ -598,7 +626,12 @@ function blitPreview() {
   ctx.clearRect(0, 0, D, D);
   ctx.imageSmoothingEnabled = !state.crispShown;
   ctx.imageSmoothingQuality = 'high';
-  const dx = v.x * dpr, dy = v.y * dpr, dw = v.z * D;                        // where the whole buffer lands, in device pixels
+  const dx = v.x * dpr, dy = v.y * dpr, dw = v.z * D;                        // where the whole composite lands, in device pixels
+  const R = state.prevBufRect;
+  if (R && (R.s !== 1 || R.x0 || R.y0)) { // a window of the composite (the exact pen view): exactly 1:1 when it is current, shifted or scaled while panning/zooming until re-rendered
+    ctx.drawImage(buf, dx + R.x0 * dw, dy + R.y0 * dw, R.s * dw, R.s * dw);
+    return;
+  }
   const u0 = Math.max(0, Math.floor((-dx / dw) * B)), u1 = Math.min(B, Math.ceil(((D - dx) / dw) * B));
   const w0 = Math.max(0, Math.floor((-dy / dw) * B)), w1 = Math.min(B, Math.ceil(((D - dy) / dw) * B));
   if (u1 > u0 && w1 > w0) ctx.drawImage(buf, u0, w0, u1 - u0, w1 - w0, dx + (u0 * dw) / B, dy + (w0 * dw) / B, ((u1 - u0) * dw) / B, ((w1 - w0) * dw) / B);
@@ -637,7 +670,52 @@ function applyView() {
   const b = $('#zoomBadge');
   b.hidden = v.z === 1;
   b.textContent = `${v.z.toFixed(1)}×`;
-  if (state.base && state.frame && (previewBuffer().width !== previewSize() || penCrisp() !== !!state.crispShown && !state.ui.pixelView)) schedulePreview(0); // zoomed far enough for a sharper render, or for real pixels
+  if (state.base && state.frame && !bufferFits()) schedulePreview(0); // zoomed far enough for a sharper render, for real pixels, or the exact pen view moved
+}
+
+/** Whether the last render still serves the current view (else applyView asks for a new one). */
+function bufferFits() {
+  const f = state.prevFor, v = state.view;
+  if (!f) return false;
+  if (penExactK()) return f.exact && f.x === v.x && f.y === v.y && f.z === v.z && f.D === viewDevice();
+  return !f.exact && f.size === previewSize() && f.crisp === (!!state.ui.pixelView || penCrisp());
+}
+/** Device pixels the preview is shown at (one side; #view is square). */
+function viewDevice() {
+  const view = $('#view'), dpr = window.devicePixelRatio || 1;
+  return Math.max(1, Math.round((view.getBoundingClientRect().width - 2 * view.clientLeft) * dpr));
+}
+/** With the pen (a 1-3 px brush) in hand: device pixels per source pixel at zoom 1, so zoom k / penUnit() makes every source pixel exactly k device pixels. 0 otherwise. */
+function penUnit() {
+  if (!state.base || state.tool !== 'brush' || !penSize(eff().brushSize)) return 0;
+  const bm = state.base.bitmap;
+  return (baseRect(resolveCfg(eff(), bm), bm, 1).w / bm.width) * viewDevice();
+}
+/** The whole number of device pixels per source pixel while the pen view is exact (the zoom is on such a step), else 0 (then the ordinary preview is used). */
+function penExactK() {
+  const u = penUnit();
+  if (!u) return 0;
+  const t = state.view.z * u, k = Math.round(t);
+  return k >= 1 && Math.abs(t - k) < 1e-6 ? k : 0;
+}
+const MAX_ZOOM = 20;
+/**
+ * With the pen in hand and zoomed in: puts the zoom on the nearest whole number of device pixels per source pixel (keeping the point mx,my of #view still; the
+ * middle by default), so every source pixel is an identical block. Called when the pen is picked up, the brush size or the image changes and on resize; a
+ * control that changes the art's scale mid-zoom is NOT followed (the view would jump while dragging a slider): the preview simply falls back until the next zoom step.
+ */
+function snapPenZoom(mx, my) {
+  const u = penUnit(), v = state.view;
+  if (!u || v.z <= 1) return;
+  const t = v.z * u;
+  if (Math.abs(t - Math.round(t)) < 1e-6) return;
+  const lo = Math.max(1, Math.ceil(u - 1e-9)), hi = Math.floor(MAX_ZOOM * u + 1e-9);
+  if (hi < lo) return;
+  const nz = Math.min(hi, Math.max(lo, Math.round(t))) / u;
+  if (mx == null) mx = my = $('#view').clientWidth / 2;
+  v.x = mx - (mx - v.x) * (nz / v.z);
+  v.y = my - (my - v.y) * (nz / v.z);
+  v.z = nz;
 }
 
 function setupView() {
@@ -647,7 +725,14 @@ function setupView() {
     const v = state.view;
     const r = view.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const nz = Math.min(20, Math.max(1, v.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    let nz = Math.min(MAX_ZOOM, Math.max(1, v.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    const u = penUnit();
+    if (u && MAX_ZOOM * u >= 1) { // the pen in hand: step between whole numbers of device pixels per source pixel (at least one step per notch)
+      const t = v.z * u;
+      let k = e.deltaY < 0 ? Math.max(Math.floor(t + 1e-6) + 1, Math.round(t * 1.15)) : Math.min(Math.ceil(t - 1e-6) - 1, Math.round(t / 1.15));
+      k = Math.min(k, Math.floor(MAX_ZOOM * u + 1e-9));
+      nz = Math.max(1, k / u);
+    }
     v.x = mx - (mx - v.x) * (nz / v.z);
     v.y = my - (my - v.y) * (nz / v.z);
     v.z = nz;
@@ -683,7 +768,7 @@ function setupView() {
     view.classList.remove('drag');
     if (wasClick && state.pickSeed) pickSeedAt(e);
   });
-  new ResizeObserver(applyView).observe(view);
+  new ResizeObserver(() => { snapPenZoom(); applyView(); }).observe(view);
 }
 
 // ---------------------------------------------------------------- manual cutout tools
@@ -704,7 +789,8 @@ function setTool(t) {
   $('#rubber').hidden = true;
   setStatus(state.tool ? TOOL_HINTS[state.tool] : '');
   syncControls();
-  if (state.base && penCrisp() !== !!state.crispShown && !state.ui.pixelView) schedulePreview(0);
+  snapPenZoom();
+  applyView();   // re-renders when the pen view starts or stops
 }
 
 /** Pointer event -> source-image pixel coordinates (handles zoom/pan via the canvas' bounding rect). */
@@ -738,6 +824,13 @@ function penCrisp() {
 function penAnchorAt(e, n) {
   const p = srcPoint(e);
   if (!p) return null;
+  if (state.exact) { // the exact pen view: source pixel i covers device columns bx + i*k .. bx + (i+1)*k - 1 of the composite
+    const E = state.exact, r = compRect();
+    const fx = (((e.clientX - r.left) / r.width) * E.S - E.bx) / E.k, fy = (((e.clientY - r.top) / r.height) * E.S - E.by) / E.k;
+    const px = Math.floor(fx), py = Math.floor(fy);
+    if (n % 2) return [px - (n - 1) / 2, py - (n - 1) / 2];
+    return [fx - px < 0.5 ? px - 1 : px, fy - py < 0.5 ? py - 1 : py];   // 2 px: the corner of the shown pixel nearest the pointer
+  }
   if (!state.crispShown) return penAnchor(p.x, p.y, n);
   const r = compRect(), Wb = previewBuffer().width, bm = state.base.bitmap, br = baseRect(resolveCfg(eff(), bm), bm, Wb);
   const col = Math.floor(((e.clientX - r.left) / r.width) * Wb), row = Math.floor(((e.clientY - r.top) / r.height) * Wb);
@@ -747,6 +840,7 @@ function penAnchorAt(e, n) {
 }
 /** Client rectangle of the pixels a pen block covers, as drawn (the preview pixels nearest neighbour gives them when crispShown). */
 function penBlockRect(a, n) {
+  if (state.exact) { const E = state.exact, r = compRect(), f = r.width / E.S; return { l: r.left + (E.bx + a[0] * E.k) * f, t: r.top + (E.by + a[1] * E.k) * f, w: n * E.k * f, h: n * E.k * f }; }
   if (!state.crispShown) { const lt = clientOfSrc(a[0], a[1]), rb = clientOfSrc(a[0] + n, a[1] + n); return { l: lt.x, t: lt.y, w: rb.x - lt.x, h: rb.y - lt.y }; }
   const r = compRect(), Wb = previewBuffer().width, bm = state.base.bitmap, br = baseRect(resolveCfg(eff(), bm), bm, Wb);
   const col = (i) => r.left + (Math.ceil(br.x + (i * br.w) / bm.width - 0.5) / Wb) * r.width;   // first preview column showing source column i
@@ -1231,6 +1325,8 @@ async function selectItem(i) {
     state.base?.bitmap.close?.();
     state.base = { path: it.path, bitmap };
     state.cut = null;
+    snapPenZoom();
+    applyView();
     syncControls();
     schedulePreview(0);
     if (hasAi(it.override) && !it.matte) { // restored from a previous session: rebuild the matte (cached on disk, fast)
@@ -1551,4 +1647,4 @@ async function init() {
   schedulePreview(0);
 }
 init();
-window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, clientOfSrc, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, get extend() { return window.__extend; }, get bgremove() { return window.__bgremove; }, eff, compositeFor, resolveCfg }); // DevTools / tests
+window.__tf = Object.assign(state, { openFolder, openImages, loadFrame, frameAll, saveCurrent, selectItem, renderPreview, pushEdit, undo, redo, resetEdits, setTool, srcPoint, clientOfSrc, buildCut, buildSources, flushEdits, rememberFrame, renderFrameList, runAi, computeMatte, renderItemBlob, get cleaner() { return window.__cleaner; }, get solver() { return window.__solver; }, get imgclean() { return window.__imgclean; }, get extend() { return window.__extend; }, get bgremove() { return window.__bgremove; }, eff, compositeFor, resolveCfg, penK: () => penExactK() }); // DevTools / tests

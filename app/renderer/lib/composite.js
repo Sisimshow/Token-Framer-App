@@ -51,10 +51,10 @@ function applyMaskShape(ctx, shape, cx, cy, radius, ox = 0, oy = 0) {
   return true;
 }
 
-function newCanvas(size) {
+function newCanvas(w, h = w) {
   const c = document.createElement('canvas');
-  c.width = size;
-  c.height = size;
+  c.width = w;
+  c.height = h;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
   return [c, ctx];
@@ -134,7 +134,11 @@ export function baseRect(cfg, base, size) {
  * @param src {base, frame, mask?, bg?, overlay?, holeMask?}  drawables (ImageBitmap/canvas/img); holeMask is a canvas
  *            at the frame's native size (white where the hole is) drawn with the frame's transform.
  * @param cfg resolved config (baseScale/baseOffset already resolved; tint colors '' when off)
- * @returns HTMLCanvasElement of size x size
+ * @param opts.crisp draw the art nearest neighbour; opts.snapArt put the art on whole pixels (origin and size rounded, so with a whole number of pixels per source
+ *        pixel every source pixel is an identical block); opts.view {x, y, w, h}: render only that window of the size x size composite into a w x h canvas (the
+ *        main window's exact pen view: a 20x zoom of the whole composite would be far too big a canvas). Every layer canvas is window-sized and drawn with the
+ *        same translation, so a window is the same as cropping the full composite (a test compares them).
+ * @returns HTMLCanvasElement of size x size (or view.w x view.h)
  */
 export function compositeImage(src, cfg, size = 1000, opts = {}) {
   const {
@@ -149,11 +153,22 @@ export function compositeImage(src, cfg, size = 1000, opts = {}) {
   const { base: baseImg, frame: frameImg, mask: maskImg, bg: bgImg, overlay: overlayImg, holeMask } = src;
   const popImg = src.popBase || baseImg; // pop-out layer may use a cut-out version of the art
 
-  const [canvas, ctx] = newCanvas(size);
+  const view = opts.view || null;
+  const OW = view ? view.w : size, OH = view ? view.h : size;
+  /** A layer canvas: the output's size, drawn in composite coordinates (shifted by the window). */
+  const layer = () => {   // (clipped to the composite's own square, which a full-size canvas clips by its edges: e.g. the pop-out highlight reaches past them)
+    const [c, t] = newCanvas(OW, OH);
+    if (view) { t.setTransform(1, 0, 0, 1, -view.x, -view.y); t.beginPath(); t.rect(0, 0, Math.trunc(size), Math.trunc(size)); t.clip(); }
+    return [c, t];
+  };
+  /** One layer onto another, pixel for pixel (both already carry the window's shift). */
+  const blit = (t, c) => { t.save(); t.setTransform(1, 0, 0, 1, 0, 0); t.drawImage(c, 0, 0); t.restore(); };
+  const [canvas, ctx] = layer();
   const cx = size / 2, cy = size / 2;
   const k = size / 512;
 
-  const { x: bx, y: by, w: bw, h: bh } = baseRect(cfg, baseImg, size);
+  let { x: bx, y: by, w: bw, h: bh } = baseRect(cfg, baseImg, size);
+  if (opts.snapArt) { bx = Math.round(bx); by = Math.round(by); bw = Math.round(bw); bh = Math.round(bh); }
   // opts.crisp: draw the art with nearest-neighbour sampling (preview "pixel view")
   const drawArt = (t, img) => {
     const s = t.imageSmoothingEnabled;
@@ -177,15 +192,15 @@ export function compositeImage(src, cfg, size = 1000, opts = {}) {
     ctx.save();
     const useHole = maskShape === 'hole' && holeMask && !maskImg;
     if (maskImg || useHole) {
-      const [baseCanvas, baseCtx] = newCanvas(size);
+      const [baseCanvas, baseCtx] = layer();
       drawBackground(baseCtx);
       drawArt(baseCtx, baseImg);
 
-      const [maskCanvas, maskCtx] = newCanvas(size);
+      const [maskCanvas, maskCtx] = layer();
       if (maskImg) {
         const s = size * maskScale;
         maskCtx.drawImage(maskImg, cx - s / 2 + maskOffsetX * k, cy - s / 2 + maskOffsetY * k, s, s);
-        const md = maskCtx.getImageData(0, 0, size, size);
+        const md = maskCtx.getImageData(0, 0, OW, OH);
         const p = md.data;
         for (let i = 0; i < p.length; i += 4) {
           const lum = p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114;
@@ -197,8 +212,8 @@ export function compositeImage(src, cfg, size = 1000, opts = {}) {
         maskCtx.drawImage(holeMask, cx - fs / 2 + frameOffsetX * k, cy - fs / 2 + frameOffsetY * k, fs, fs);
       }
       baseCtx.globalCompositeOperation = 'destination-in';
-      baseCtx.drawImage(maskCanvas, 0, 0);
-      ctx.drawImage(baseCanvas, 0, 0);
+      blit(baseCtx, maskCanvas);
+      blit(ctx, baseCanvas);
     } else {
       // 'hole' without hole data falls back to a circle
       const shape = maskShape === 'hole' ? 'circle' : maskShape;
@@ -212,14 +227,14 @@ export function compositeImage(src, cfg, size = 1000, opts = {}) {
   // Multiply tint keeps light/dark detail; destination-in restores the original alpha.
   const drawWithTint = (img, x, y, w, h, tint) => {
     if (!tint) { ctx.drawImage(img, x, y, w, h); return; }
-    const [off, offCtx] = newCanvas(size);
+    const [off, offCtx] = layer();
     offCtx.drawImage(img, x, y, w, h);
     offCtx.globalCompositeOperation = 'multiply';
     offCtx.fillStyle = tint;
     offCtx.fillRect(0, 0, size, size);
     offCtx.globalCompositeOperation = 'destination-in';
     offCtx.drawImage(img, x, y, w, h);
-    ctx.drawImage(off, 0, 0);
+    blit(ctx, off);
   };
 
   const drawFrame = () => {
