@@ -1097,6 +1097,60 @@ async function main() {
       check('Review fixes: an upscale resize still running when another image is loaded does not install the old result', !u.cleaned && u.saveOff, J(u));
     } else console.log('SKIP  Review fix (upscale race): models/4x-UltraMix_Smooth.onnx not found');
 
+    // review fixes (group 3): Clean frame / Solve keep the newest image, ask before a huge one, and start clean after a worker crash; a save keeps the format it started with
+    {
+      const bigP = path.join(work, 'CF big.png'), smallP = path.join(work, 'CF small.png'), hugeP = path.join(work, 'CF huge.png'), whiteP = path.join(work, 'SV white.png'), blackP = path.join(work, 'SV black.png'), solvedP = path.join(work, 'SV solved Frame.png');
+      const g = await app.ev(`(async () => {
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const o = {};
+        const mk = async (p, w, h, fill, ring) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.fillStyle = fill; x.fillRect(0, 0, w, h);
+          if (ring) { x.fillStyle = ring; x.fillRect(w * 0.2, h * 0.2, w * 0.6, h * 0.6); }
+          await window.api.writeFile(p, new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer())); };
+        await mk(${J(bigP)}, 2000, 2000, 'rgba(200,60,60,0.6)'); await mk(${J(smallP)}, 120, 90, 'rgba(60,200,60,0.6)'); await mk(${J(hugeP)}, 5200, 5000, 'rgba(60,60,200,0.6)');
+        await mk(${J(whiteP)}, 400, 400, '#ffffff', '#808080'); await mk(${J(blackP)}, 400, 400, '#000000', '#808080');
+        const cf = __tf.cleaner;
+        cf.open(); await wait(200);
+        // two loads overlapping: the newer (small) one wins even though the older (big) one finishes later
+        await Promise.all([cf.loadPath(${J(bigP)}), cf.loadPath(${J(smallP)})]); await wait(300);
+        o.newest = cf.loaded;
+        // a huge image asks first; declining leaves nothing loaded
+        const oldConfirm = window.confirm; let asked = 0; window.confirm = () => { asked++; return false; };
+        await cf.loadPath(${J(hugeP)}); window.confirm = oldConfirm;
+        o.huge = { asked, loaded: cf.loaded, saveOff: document.querySelector('#cfSave').disabled };
+        // a worker crash clears the screen instead of leaving it half working
+        await cf.loadPath(${J(smallP)}); await wait(300);
+        cf.crashWorker(); await wait(100);
+        o.crash = { loaded: cf.loaded, saveOff: document.querySelector('#cfSave').disabled, msg: document.querySelector('#cfMsg')?.textContent || '' };
+        await cf.loadPath(${J(smallP)}); await wait(300);
+        o.again = cf.loaded;
+        cf.close();
+        // Solve: after a crash the renders AND the middle mask are gone; reloading both gives an export with the middle cleared again
+        const sv = __tf.solver;
+        sv.open('frame'); await wait(300);
+        await sv.setParams({ preClean: false });
+        await sv.loadSlot('white', ${J(whiteP)}); await sv.loadSlot('black', ${J(blackP)}); await wait(500);
+        sv.crashWorker(); await wait(100);
+        o.svCrash = sv.slotSizes;
+        await sv.loadSlot('white', ${J(whiteP)}); await sv.loadSlot('black', ${J(blackP)}); await wait(800);
+        await sv.saveTo(${J(solvedP)});
+        const bm = await createImageBitmap(new Blob([await window.api.readFile(${J(solvedP)})])); const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d'); x.drawImage(bm, 0, 0);
+        o.middle = x.getImageData(bm.width >> 1, bm.height >> 1, 1, 1).data[3];
+        o.ring = x.getImageData(Math.round(bm.width * 0.25), Math.round(bm.height * 0.25), 1, 1).data[3];
+        sv.close();
+        return o;
+      })()`);
+      check('Review fixes: Clean frame keeps the newest image when two loads overlap', g.newest && g.newest.w === 120 && g.newest.h === 90, J(g.newest));
+      check('Review fixes: Clean frame asks before a very large image, and declining leaves nothing loaded', g.huge.asked === 1 && g.huge.loaded === null && g.huge.saveOff, J(g.huge));
+      check('Review fixes: a Clean frame worker crash clears the screen; the image can simply be opened again', g.crash.loaded === null && g.crash.saveOff && /Open the image again/.test(g.crash.msg) && g.again && g.again.w === 120, J({ crash: g.crash, again: g.again }));
+      check('Review fixes: a Solve worker crash clears both renders; reopened, the export clears the middle again', g.svCrash.white === null && g.svCrash.black === null && g.middle === 0 && g.ring > 200, J({ svCrash: g.svCrash, middle: g.middle, ring: g.ring }));
+      // a save keeps the format of the moment it started (the format switched to PNG while it runs)
+      const tokP = path.join(path.dirname(art), `${path.basename(art).replace(/\.[^.]+$/, '')} Token.webp`);
+      fs.rmSync(tokP, { force: true });
+      await app.ev(`(async () => { await __tf.openImages([${J(art)}]); await new Promise((r) => setTimeout(r, 600)); return 1; })()`);
+      await app.ev(`(async () => { __tf.out.format = 'webp'; const job = __tf.saveCurrent(false); __tf.out.format = 'png'; await job; __tf.out.format = 'webp'; return 1; })()`);
+      const magic = fs.existsSync(tokP) ? fs.readFileSync(tokP).subarray(0, 4).toString('latin1') : '';
+      check('Review fixes: a save keeps the file format it started with even if the format is changed while it runs', magic === 'RIFF', J({ magic, tokP }));   // (the token stays: a later check expects it)
+    }
+
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);

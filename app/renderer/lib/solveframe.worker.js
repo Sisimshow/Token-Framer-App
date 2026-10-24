@@ -3,6 +3,7 @@ import { createSolver } from './solveframe.js';
 import { decode, toPng } from './imgio.js';
 
 const solver = createSolver();
+const loadSeq = { white: 0, black: 0 }; // loads overlap at the decode: only the newest one per slot may become that render
 
 self.onmessage = async ({ data }) => {
   const { type, id } = data;
@@ -14,7 +15,9 @@ self.onmessage = async ({ data }) => {
       solver.setMask(red, d.width, d.height);
       self.postMessage({ type, id });
     } else if (type === 'load') {
+      const mine = ++loadSeq[data.slot];
       const d = await decode(data.bytes);
+      if (mine !== loadSeq[data.slot]) throw new Error('stale');   // a newer image for this slot was asked for meanwhile
       solver.setImage(data.slot, d.data, d.width, d.height);
       const copy = new Uint8ClampedArray(d.data); // straight copy for the White / Black views
       self.postMessage({ type, id, w: d.width, h: d.height, rgba: copy }, [copy.buffer]);

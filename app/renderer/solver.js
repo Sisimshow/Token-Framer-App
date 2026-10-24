@@ -44,7 +44,8 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
   const S = canvas.width;
   const paramSets = { frame: { ...SOLVE_DEFAULTS }, image: { ...SOLVE_DEFAULTS, ...IMAGE_OVERRIDES } };
   let mode = 'frame', params = paramSets.frame;   // `params` is the active mode's set (the controls are rebuilt on a mode change, so they follow it)
-  const rpc = makeRpc('lib/solveframe.worker.js', (m) => setMsg(`The solver worker stopped: ${m}`, true));
+  // a crash loses the renders, their cleaned copies AND the "clear the middle" mask the worker held: the screen is cleared rather than left exporting without the mask
+  const rpc = makeRpc('lib/solveframe.worker.js', (m) => { forgetAll(); setMsg(`The solver worker stopped (${m}). Open the white and black renders again.`, true); });
   const ask = rpc.ask;
   const slots = { white: null, black: null }; // { path, name, w, h, canvas }
   let result = null, resultCanvas = null, maskAlpha = null, maskReady = null;
@@ -192,12 +193,21 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
   }
 
   // ---------------------------------------------------------------- files
+  const loadReq = { white: 0, black: 0 };
+  function forgetAll() {
+    slots.white = slots.black = null; maskReady = null; result = null; resultCanvas = null;
+    for (const id of ['#svWhiteName', '#svBlackName']) { const l = $(id); l.textContent = 'none'; l.title = ''; l.classList.add('muted'); }
+    refreshButtons(); redraw();
+  }
   async function loadSlot(slot, p) {
+    const req = ++loadReq[slot]; // the most recently asked-for render per slot wins, whichever finishes last
     try {
       setMsg('Loading…');
       const bytes = await api.readFile(p);
+      if (req !== loadReq[slot]) return;
       const buf = bytes.slice().buffer;
       const r = await ask({ type: 'load', slot, bytes: buf }, [buf]);
+      if (req !== loadReq[slot]) return;
       slots[slot] = { path: p, name: baseOf(p), w: r.w, h: r.h, rgba: r.rgba, canvas: toCanvas(r.rgba, r.w, r.h), cleanKey: null, cleanCanvas: null };
       const label = $(slot === 'white' ? '#svWhiteName' : '#svBlackName');
       label.textContent = p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) + 1);
@@ -209,7 +219,7 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
       if (slots.white && slots.black) await run();
       else setMsg(`Now open the ${slot === 'white' ? 'black' : 'white'} render.`);
     } catch (err) {
-      setMsg(`Could not open that image: ${err.message}`, true);
+      if (req === loadReq[slot]) setMsg(`Could not open that image: ${err.message}`, true);
     }
   }
   async function pickSlot(slot) {
@@ -304,6 +314,9 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
 
   return {
     open, close, isOpen, loadSlot, saveTo,
+    /** For tests: what a worker crash does. */
+    crashWorker: () => rpc.crash(),
+    get slotSizes() { return { white: slots.white && [slots.white.w, slots.white.h], black: slots.black && [slots.black.w, slots.black.h] }; },
     get params() { return params; },
     setParams(p) { Object.assign(params, p); ui?.sync(); refreshButtons(); updateInfo(); redraw(); return run(); },
     /** For tests: what the Process button does (resolves when the pre-clean and the re-solve are done). */

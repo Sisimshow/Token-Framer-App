@@ -55,7 +55,9 @@ export function makeRpc(url, onFatal = () => {}) {
       ensure().postMessage({ ...msg, id }, transfer);
     }),
     /** Stops the worker (its work is lost, along with anything it was holding) and rejects every pending request with an error whose `cancelled` is true. onFatal is NOT called. */
-    cancel: () => stop('Cancelled', true)
+    cancel: () => stop('Cancelled', true),
+    /** For tests: what a worker crash does (onFatal is called). */
+    crash: () => fail('the worker was stopped')
   };
 }
 

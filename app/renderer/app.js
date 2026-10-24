@@ -423,8 +423,8 @@ async function ensureAssets(cfg) {
   }
 }
 
-function holeCanvasFor(cfg) {
-  const hole = state.frame?.hole;
+function holeCanvasFor(cfg, frame = state.frame) {
+  const hole = frame?.hole;
   if (!hole?.valid) return null;
   const native = Math.round((cfg.holeDilate * hole.w) / (1000 * cfg.frameScale));
   if (state.frame.holeCache?.key !== native || state.frame.holeCache?.hole !== hole) {
@@ -527,22 +527,22 @@ function buildSources(cfg, bitmap, cut = null, matte = null) {
 }
 
 /** Config with placement resolved (Auto center), tints flattened: what compositeImage consumes. */
-function resolveCfg(cfg, base) {
+function resolveCfg(cfg, base, frame = state.frame) {
   return {
-    ...cfg, ...resolvePlacement(cfg, base, state.frame?.hole),
+    ...cfg, ...resolvePlacement(cfg, base, frame?.hole),
     frameTintColor: cfg.frameTintOn ? cfg.frameTintColor : '',
     overlayTintColor: cfg.overlayTintOn ? cfg.overlayTintColor : ''
   };
 }
 
-function compositeFor(cfg, sources, size, opts) {
-  const c = resolveCfg(cfg, sources.base);
+function compositeFor(cfg, sources, size, opts, frame = state.frame) {
+  const c = resolveCfg(cfg, sources.base, frame);
   return compositeImage({
-    ...sources, frame: state.frame.bitmap,
+    ...sources, frame: frame.bitmap,
     mask: (cfg.maskImage && state.assets.get(cfg.maskImage)) || null,
     bg: (cfg.bgImage && state.assets.get(cfg.bgImage)) || null,
     overlay: (cfg.overlayImage && state.assets.get(cfg.overlayImage)) || null,
-    holeMask: c.maskShape === 'hole' ? holeCanvasFor(cfg) : null
+    holeMask: c.maskShape === 'hole' ? holeCanvasFor(cfg, frame) : null
   }, c, size, opts);
 }
 
@@ -1204,7 +1204,8 @@ function applyFramesOpen() {
 async function loadFrame(p, { keepOrder = false } = {}) {
   try {
     const bitmap = await bitmapFromPath(p);
-    state.frame?.bitmap.close?.();
+    if (state.saving) (state.closeAfterSave ||= []).push(state.frame?.bitmap); // a save still drawing with the old frame keeps it until it is done
+    else state.frame?.bitmap.close?.();
     state.frame = { path: p, name: baseOf(p), bitmap, hole: detectHole(bitmap), holeCache: null };
     state.pickSeed = false;
     $('#view').classList.remove('seed');
@@ -1432,21 +1433,36 @@ function setStatus(text, warn = false) {
   s.style.color = warn ? 'var(--warn)' : '';
 }
 
-async function renderItemBlob(it) {
+/**
+ * What a save uses, taken when it starts: the shared settings, output size, format and quality, and the frame. A save waits (an AI matte, assets), so a
+ * setting changed meanwhile must not change it (a .webp name with PNG bytes, another frame half way through Save all).
+ */
+function exportSnapshot() {
+  return { shared: structuredClone(state.shared), size: state.out.size, ext: fmtExt(), quality: encodeQuality(), frame: state.frame };
+}
+/** Runs a save while keeping the frames it may use alive (loadFrame does not close a frame bitmap while a save is running). */
+async function saving(fn) {
+  state.saving = (state.saving || 0) + 1;
+  try { return await fn(); } finally {
+    if (--state.saving === 0) { for (const b of state.closeAfterSave || []) b.close?.(); state.closeAfterSave = []; }
+  }
+}
+
+async function renderItemBlob(it, snap = exportSnapshot()) {
   const bmp = await itemBitmap(it);
   try {
-    const cfg = { ...state.shared, ...it.override };
+    const cfg = { ...snap.shared, ...it.override };
     await ensureAssets(cfg);
     await ensureMatte(it, bmp);
-    const canvas = compositeFor(cfg, buildSources(cfg, bmp, null, it.matte), state.out.size, {});
-    return await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), `image/${fmtExt()}`, encodeQuality()));
+    const canvas = compositeFor(cfg, buildSources(cfg, bmp, null, it.matte), snap.size, {}, snap.frame);
+    return await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), `image/${snap.ext}`, snap.quality));
   } finally {
     bmp.close();
   }
 }
 
-async function writeItem(it, outPath) {
-  const blob = await renderItemBlob(it);
+async function writeItem(it, outPath, snap) {
+  const blob = await renderItemBlob(it, snap);
   await api.writeFile(outPath, new Uint8Array(await blob.arrayBuffer()));
   it.tag = 'saved';
   if (outPath === it.outPath) it.exists = true;
@@ -1466,9 +1482,10 @@ async function saveCurrent(asNew) {
     out = await api.pickSave(it.outPath, fmtExt());
     if (!out) return;
   } else if (it.exists && !state.out.overwrite && !confirm(`${it.base} Token.${fmtExt()} already exists. Overwrite it?`)) return;
+  const snap = exportSnapshot();
   try {
     setStatus(`Saving ${baseOf(out)}…`);
-    await writeItem(it, out);
+    await saving(() => writeItem(it, out, snap));
     setStatus(`Saved ${out}`);
   } catch (err) {
     it.tag = `error: ${err.message}`;
@@ -1481,6 +1498,8 @@ async function frameAll() {
   if (!needFrame()) return;
   const todo = state.items.filter((i) => i.selected && (!i.exists || state.out.overwrite));
   if (!todo.length) { setStatus('Nothing selected.', true); return; }
+  const snap = exportSnapshot(), outs = new Map(todo.map((i) => [i, i.outPath])); // the whole batch with the settings and file names of the moment it started
+  await saving(async () => {
   const prog = $('#prog');
   prog.hidden = false;
   prog.max = todo.length;
@@ -1491,11 +1510,11 @@ async function frameAll() {
     const it = todo[n];
     prog.value = n;
     setStatus(`Framing ${n + 1}/${todo.length}: ${it.base}`);
-    const key = it.outPath.toLowerCase(), first = claimed.get(key);
+    const key = outs.get(it).toLowerCase(), first = claimed.get(key);
     if (first) { it.tag = `error: same output file as ${first.name}`; fail++; updateTile(state.items.indexOf(it)); continue; }
     claimed.set(key, it);
     try {
-      await writeItem(it, it.outPath);
+      await writeItem(it, outs.get(it), snap);
       ok++;
     } catch (err) {
       it.tag = `error: ${err.message}`;
@@ -1507,6 +1526,7 @@ async function frameAll() {
   prog.hidden = true;
   setStatus(`Done: ${ok} saved${fail ? `, ${fail} failed` : ''}, ${state.items.length - todo.length} skipped.`, fail > 0);
   updateBatchBar();
+  });
 }
 
 /** Render every ticked image into one .zip (existing tokens on disk don't matter: nothing is written next to the sources). */
@@ -1525,14 +1545,16 @@ async function zipAll() {
   const files = [];
   const used = new Set();
   let fail = 0;
+  const snap = exportSnapshot();
+  await saving(async () => {
   for (let n = 0; n < todo.length; n++) {
     const it = todo[n];
     prog.value = n;
     setStatus(`Rendering ${n + 1}/${todo.length}: ${it.base}`);
     try {
-      const blob = await renderItemBlob(it);
-      let name = `${it.base} Token.${fmtExt()}`;
-      for (let k = 2; used.has(name.toLowerCase()); k++) name = `${it.base} Token (${k}).${fmtExt()}`;
+      const blob = await renderItemBlob(it, snap);
+      let name = `${it.base} Token.${snap.ext}`;
+      for (let k = 2; used.has(name.toLowerCase()); k++) name = `${it.base} Token (${k}).${snap.ext}`;
       used.add(name.toLowerCase());
       files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
     } catch (err) {
@@ -1542,6 +1564,7 @@ async function zipAll() {
     }
     await new Promise((r) => setTimeout(r, 0));
   }
+  });
   prog.hidden = true;
   try {
     if (files.length) {

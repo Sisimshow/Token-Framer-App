@@ -1,7 +1,7 @@
 // "Clean frame" tool: a full-window overlay with the image preview on the left and the cleanup controls on the right.
 // The maths lives in lib/cleanframe.js and runs in lib/cleanframe.worker.js so the sliders stay responsive.
 import { DEFAULTS, fitRect } from './lib/cleanframe.js';
-import { buildControls, drawInSquare, makeRpc } from './ui-kit.js';
+import { buildControls, confirmHeavy, drawInSquare, makeRpc } from './ui-kit.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 
@@ -25,7 +25,8 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
   const ctx = canvas.getContext('2d');
   const S = canvas.width; // internal preview resolution (square)
   const params = { ...DEFAULTS };
-  const rpc = makeRpc('lib/cleanframe.worker.js', (m) => setMsg(`The cleanup worker stopped: ${m}`, true));
+  // a crash loses the image the worker held: the screen is cleared rather than left half working
+  const rpc = makeRpc('lib/cleanframe.worker.js', (m) => { forget(); setMsg(`The cleanup worker stopped (${m}). Open the image again.`, true); });
   const ask = rpc.ask;
   let src = null;          // { path, name, w, h, hasAlpha }
   let origCanvas = null, resultCanvas = null, result = null;
@@ -81,12 +82,22 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
   }
 
   // ---------------------------------------------------------------- files
+  let loadReq = 0;
+  function forget() {
+    src = null; origCanvas = null; result = null; resultCanvas = null;
+    const n = $('#cfName'); n.textContent = 'no image'; n.title = ''; n.classList.add('muted');
+    enableSave(false); redraw();
+  }
   async function loadPath(p) {
+    const req = ++loadReq; // the most recently asked-for image wins, whichever finishes last
     try {
       setMsg('Loading…');
       const bytes = await api.readFile(p);
+      if (req !== loadReq) return;
       const buf = bytes.slice().buffer;
       const r = await ask({ type: 'load', bytes: buf }, [buf]);
+      if (req !== loadReq) return;
+      if (!confirmHeavy(r.w, r.h, 'Cleaning this frame')) { forget(); setMsg('Cancelled: that image is very large.'); return; }
       src = { path: p, name: baseOf(p), w: r.w, h: r.h, hasAlpha: r.hasAlpha };
       origCanvas = toCanvas(r.rgba, r.w, r.h);
       result = null; resultCanvas = null;
@@ -97,7 +108,7 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
       redraw();
       await run();
     } catch (err) {
-      setMsg(`Could not open that image: ${err.message}`, true);
+      if (req === loadReq) setMsg(`Could not open that image: ${err.message}`, true);
     }
   }
   async function pickImage() {
@@ -162,6 +173,9 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
 
   return {
     open, close, isOpen, loadPath, saveTo, pickImage,
+    /** For tests: what a worker crash does. */
+    crashWorker: () => rpc.crash(),
+    get loaded() { return src ? { path: src.path, w: src.w, h: src.h } : null; },
     params,
     setParams(p) { Object.assign(params, p); ui?.sync(); updateInfo(); redraw(); return run(); },
     get result() { return result; },

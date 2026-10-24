@@ -3,12 +3,15 @@ import { createCleaner } from './cleanframe.js';
 import { decode, toPng } from './imgio.js';
 
 const cleaner = createCleaner();
+let loadSeq = 0; // loads overlap at the decode: only the newest one may become the image
 
 self.onmessage = async ({ data }) => {
   const { type, id } = data;
   try {
     if (type === 'load') {
+      const mine = ++loadSeq;
       const d = await decode(data.bytes);
+      if (mine !== loadSeq) throw new Error('stale');   // a newer image was asked for meanwhile
       cleaner.setImage(d.data, d.width, d.height);
       // keep a straight copy for the "show original" view
       const orig = new Uint8ClampedArray(d.data);

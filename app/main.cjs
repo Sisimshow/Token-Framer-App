@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, net, screen } = require('electron');
 const crypto = require('crypto');
+const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const modelrun = require('./modelrun.cjs');
@@ -202,6 +203,10 @@ async function runClean(e, name, rgba, w, h, reqId) { // reqId comes back on eve
   const { session, ort, provider } = await getCleanSession(name);
   const meta = listCleanModels().find((m) => m.name === name);
   if (w * meta.scale * h * meta.scale > MAX_OUTPUT_PIXELS) throw new Error(`The result would be ${w * meta.scale}×${h * meta.scale} pixels, more than the ${Math.round(MAX_OUTPUT_PIXELS / 1e6)} megapixel limit. Use a smaller image.`);
+  // The tiled engine keeps full-size working buffers (input planes, output accumulation and weights, the RGBA result): about 12 bytes per input pixel and 20 per
+  // output pixel. Refused when that is more than half the computer's memory, instead of exhausting it. (Tiling those buffers too would lift this; not done.)
+  const need = 12 * w * h + 20 * w * h * meta.scale * meta.scale;
+  if (need > os.totalmem() / 2) throw new Error(`That needs about ${(need / 1e9).toFixed(1)} GB of memory, more than half of this computer's ${(os.totalmem() / 1e9).toFixed(0)} GB. Use a smaller image or a smaller factor.`);
   const runModel = async (data, tw, th) => {
     const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', data, [1, 3, th, tw]) });
     return out[session.outputNames[0]].data;
@@ -248,8 +253,18 @@ ipcMain.on('app:flushSync', (e, settings, edits) => {
 // ---------------------------------------------------------------- AI background removal (RMBG-2.0, FP16 ONNX)
 // Community ONNX export of briaai/RMBG-2.0 (CC BY-NC 4.0, personal use). Fixed 1024x1024 input; output is already a 0..1 alpha.
 // Mattes are cached by a hash of the model input, so a restart or Save all never re-runs the model for an image it has seen.
-const MODEL_URL = 'https://huggingface.co/yamura4/RMBG-2.0-ONNX/resolve/main/onnx/model_fp16.onnx';
+// Pinned to one revision and checked by SHA-256 (the LFS hash HF publishes; it matched an installed copy), so a changed or tampered upstream file is refused
+// instead of being handed to the native ONNX parser.
+const MODEL_REV = 'fcd7830ebd0cc92c5e6262da225a7cc41f2a9afd';
+const MODEL_URL = `https://huggingface.co/yamura4/RMBG-2.0-ONNX/resolve/${MODEL_REV}/onnx/model_fp16.onnx`;
 const MODEL_SIZE = 512588696;
+const MODEL_SHA256 = '40da1311f8e212c6e878cb126d5ace796c40a648b0e58d05999108f6a5448baa';
+/** SHA-256 of a file, read in chunks. */
+async function sha256File(file) {
+  const h = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(file)) h.update(chunk);
+  return h.digest('hex');
+}
 const MATTE_RES = 1024;
 const modelFile = () => path.join(app.getPath('userData'), 'models', 'RMBG-2.0-fp16.onnx');
 const matteDir = () => path.join(app.getPath('userData'), 'mattes');
@@ -276,9 +291,11 @@ async function downloadModel(sender) {
   if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
   const total = Number(res.headers.get('content-length')) || MODEL_SIZE;
   let got = 0, last = 0;
+  const hash = crypto.createHash('sha256');
   const progress = new Transform({
     transform(chunk, _enc, cb) {
       got += chunk.length;
+      hash.update(chunk);
       if (Date.now() - last > 200 && !sender.isDestroyed()) { last = Date.now(); sender.send('ai:progress', { got, total }); }
       cb(null, chunk);
     }
@@ -286,6 +303,7 @@ async function downloadModel(sender) {
   try {
     await pipeline(Readable.fromWeb(res.body), progress, fs.createWriteStream(part)); // a disk-full or permission error rejects here instead of crashing the app
     if (fs.statSync(part).size !== MODEL_SIZE) throw new Error('The downloaded model file has the wrong size.');
+    if (hash.digest('hex') !== MODEL_SHA256) throw new Error('The downloaded model file is not the expected one (checksum mismatch).');
   } catch (err) {
     fs.rmSync(part, { force: true });
     throw err;
@@ -299,6 +317,7 @@ handle('ai:chooseModel', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'ONNX model', extensions: ['onnx'] }] });
   if (r.canceled) return false;
   if (fs.statSync(r.filePaths[0]).size !== MODEL_SIZE) throw new Error('That is not the RMBG-2.0 FP16 model (unexpected file size).');
+  if (await sha256File(r.filePaths[0]) !== MODEL_SHA256) throw new Error('That is not the RMBG-2.0 FP16 model this app expects (checksum mismatch).');
   fs.mkdirSync(path.dirname(modelFile()), { recursive: true });
   fs.copyFileSync(r.filePaths[0], modelFile());
   return true;

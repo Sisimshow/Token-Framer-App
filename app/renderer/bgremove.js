@@ -26,7 +26,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   const stage = canvas.parentElement;           // .tsView, the positioning parent of the brush ring and the rubber band
   const defaults = () => ({ ...Object.fromEntries(KEYS.map((k) => [k, DEFAULTS[k]])), ...CF_DEFAULTS, cleanEnabled: true });
   const params = defaults();
-  const rpc = makeRpc('lib/cleanframe.worker.js', (m) => setMsg(`The cleanup worker stopped: ${m}`, true));
+  const rpc = makeRpc('lib/cleanframe.worker.js', (m) => { cleanStale = true; cleanCanvas = null; setMsg(`The cleanup worker stopped: ${m}`, true); });   // a fresh worker has no image: the next clean sends it again
   let cleanCanvas = null, cleanInfo = null, cleanStale = true, cleaning = false, cleanAgain = false, cleanTimer = 0;   // the cleaned frame (frame mode): the cutout run through lib/cleanframe.js in a worker
   let mode = 'image';                           // 'image' or 'frame': only the title, the default name and the second save button differ
   let src = null;                               // { path, name, w, h, canvas (the original), id (its ImageData, never changed) }
