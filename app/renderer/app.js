@@ -43,34 +43,48 @@ const sepOf = (p) => (p.includes('\\') ? '\\' : '/');
 const baseOf = (p) => p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) + 1).replace(/\.[^.]+$/, '');
 
 // ---------------------------------------------------------------- settings
-let persistTimer = 0;
+let persistTimer = 0, settingsDirty = false, editsDirty = false; // dirty: a change not handed to the main process yet (written at once if the window closes)
 // Per-image settings (pop-out, cutout tuning) are never saved as shared defaults, so a new session or a new batch always starts with them at their defaults.
 const sharedForSave = () => { const o = { ...state.shared }; for (const k of PER_IMAGE_KEYS) delete o[k]; return o; };
+const settingsPayload = () => ({ shared: sharedForSave(), out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen, sections: state.ui.sections });
 function persist() {
   clearTimeout(persistTimer);
-  persistTimer = setTimeout(() => {
-    api.setSettings({ shared: sharedForSave(), out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen, sections: state.ui.sections });
-  }, 500);
+  settingsDirty = true;
+  persistTimer = setTimeout(() => { settingsDirty = false; api.setSettings(settingsPayload()); }, 500);
 }
 
 // Per-image overrides (incl. manual cutout edits) survive restarts: edits.json in userData, keyed by source path.
 // popEdits are in source pixels, so each entry also records the image size and is dropped if the file changed shape.
 const editKey = (p) => p.toLowerCase();
 let editsTimer = 0;
-function flushEdits() {
-  clearTimeout(editsTimer);
+/** Copies every item's override into the edits store (what edits.json holds). */
+function syncEditsStore() {
   for (const it of state.items) {
     if (!it.path) continue; // pasted image, nothing to key the edits to
     const k = editKey(it.path);
     if (Object.keys(it.override).length) state.editsStore[k] = { override: it.override, w: it.dims?.w ?? state.editsStore[k]?.w, h: it.dims?.h ?? state.editsStore[k]?.h };
     else delete state.editsStore[k];
   }
+}
+function flushEdits() {
+  clearTimeout(editsTimer);
+  syncEditsStore();
+  editsDirty = false;
   return api.setEdits(state.editsStore);
 }
 function persistEdits() {
   clearTimeout(editsTimer);
+  editsDirty = true;
   editsTimer = setTimeout(flushEdits, 500);
 }
+// Closing the window right after a change: the 500 ms save would never run, so whatever is pending is written synchronously now.
+window.addEventListener('beforeunload', () => {
+  if (!settingsDirty && !editsDirty) return;
+  clearTimeout(persistTimer); clearTimeout(editsTimer);
+  if (editsDirty) syncEditsStore();
+  try { api.flushNow(settingsDirty ? settingsPayload() : null, editsDirty ? state.editsStore : null); } catch { /* nothing more can be done while closing */ }
+  settingsDirty = editsDirty = false;
+});
 
 // ---------------------------------------------------------------- control schema
 const fit = (c) => c.fitEnabled && holeValid();

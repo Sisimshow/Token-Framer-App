@@ -22,5 +22,6 @@ contextBridge.exposeInMainWorld('api', {
   onModelProgress: (fn) => ipcRenderer.on('models:progress', (_e, p) => fn(p)),
   getEdits: () => ipcRenderer.invoke('edits:get'),
   setEdits: (data) => ipcRenderer.invoke('edits:set', data),
+  flushNow: (settings, edits) => ipcRenderer.sendSync('app:flushSync', settings, edits),
   pathForFile: (file) => webUtils.getPathForFile(file)
 });

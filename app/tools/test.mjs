@@ -1583,6 +1583,35 @@ async function main() {
   await app.launch();
   check('an old saved shared pop-out-on is ignored at startup', (await app.ev('__tf.shared.popOutEnabled')) === false);
 
+  // -- review fixes (group 2): the window may only read images and write images/ZIPs; a change made just before closing the window survives; a corrupt edits.json is kept aside
+  const ipc = await app.ev(`(async () => { const o = {};
+    const tryIt = async (f) => { try { await f(); return 'allowed'; } catch (e) { return String(e.message || e); } };
+    o.js = await tryIt(() => window.api.writeFile(${J(path.join(work, 'evil.js'))}, new Uint8Array([1, 2, 3])));
+    o.bat = await tryIt(() => window.api.writeFile(${J(path.join(work, 'evil.bat'))}, new Uint8Array([1, 2, 3])));
+    o.ini = await tryIt(() => window.api.readFile('C:\\\\Windows\\\\win.ini'));
+    o.png = await tryIt(() => window.api.readFile(${J(art)}));
+    return o; })()`);
+  check('Review fixes: the window cannot write scripts or read non-image files, images still open', /Only images/.test(ipc.js) && /Only images/.test(ipc.bat) && /Only image files/.test(ipc.ini) && ipc.png === 'allowed' && !fs.existsSync(path.join(work, 'evil.js')), J(ipc));
+  await app.ev(`__tf.openImages([${J(art)}])`);
+  await app.ev(WAIT_BASE);
+  await sleep(700);
+  const editsBefore = await app.ev(`__tf.items[0].override.popEdits?.length || 0`);
+  await app.ev(`(__tf.pushEdit({ type: 'rect', x0: 1, y0: 1, x1: 9, y1: 9 }), setTimeout(() => window.close(), 30), 1)`);   // close at once: the 500 ms save never runs
+  await new Promise((r) => { const t = setTimeout(r, 6000); app.proc.once('exit', () => { clearTimeout(t); r(); }); });
+  app.close();
+  await sleep(500);
+  await app.launch();
+  await app.ev(`__tf.openImages([${J(art)}])`);
+  await app.ev(WAIT_BASE);
+  const kept = await app.ev(`(() => { const e = __tf.items[0].override.popEdits || []; return { n: e.length, last: e.at(-1) }; })()`);
+  check('Review fixes: an edit made just before closing the window is still there after a restart', kept.n === editsBefore + 1 && kept.last?.type === 'rect' && kept.last.x1 === 9, J({ editsBefore, kept }));
+  app.close();
+  await sleep(800);
+  fs.writeFileSync(path.join(userData, 'edits.json'), '{"broken": ');
+  await app.launch();
+  const corrupt = fs.readdirSync(userData).filter((f) => f.startsWith('edits.json.corrupt-'));
+  check('Review fixes: a corrupt edits.json is kept aside (not overwritten) and the app still starts', corrupt.length === 1 && fs.readFileSync(path.join(userData, corrupt[0]), 'utf8') === '{"broken": ', J(corrupt));
+
   app.close();
 }
 

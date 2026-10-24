@@ -12,6 +12,44 @@ const IMG_FILTER = [{ name: 'Images', extensions: ['webp', 'png', 'jpg', 'jpeg',
 
 let win = null;
 
+/** Only the app's own window may use the IPC below. */
+const fromApp = (e) => !!win && !win.isDestroyed() && e.sender === win.webContents;
+/** ipcMain.handle, refusing any sender but the app's window. */
+const handle = (channel, fn) => ipcMain.handle(channel, (e, ...args) => {
+  if (!fromApp(e)) throw new Error('Not allowed.');
+  return fn(e, ...args);
+});
+/** What the window may write: images and ZIPs. Not scripts, shortcuts or the app's own code, whatever a compromised page might try. */
+const WRITE_EXT = /\.(png|webp|jpe?g|zip)$/i;
+
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+/**
+ * Writes a file so that a crash mid-write can never leave it half written: a temporary file next to it, flushed to disk, then renamed over it. Windows can
+ * briefly refuse the rename while Defender, the indexer or OneDrive holds the file: retried a few times, then written directly.
+ */
+function writeFileAtomic(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  const fd = fs.openSync(tmp, 'w');
+  try { fs.writeSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  for (let i = 0; ; i++) {
+    try { fs.renameSync(tmp, file); return; } catch (err) {
+      if (i < 5 && /EPERM|EBUSY|EACCES/.test(err.code)) { sleepSync(40); continue; }
+      try { fs.writeFileSync(file, data); } finally { fs.rmSync(tmp, { force: true }); }
+      return;
+    }
+  }
+}
+/** A JSON file, or {} when it is missing. A file that does not parse is kept aside as <name>.corrupt-<time> (so the next save cannot destroy what is left of it). */
+function readJson(file) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return {}; }
+  try { return JSON.parse(text); } catch {
+    try { fs.renameSync(file, `${file}.corrupt-${Date.now()}`); } catch { /* leave it */ }
+    return {};
+  }
+}
+
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 const editsFile = () => path.join(app.getPath('userData'), 'edits.json');
 const windowFile = () => path.join(app.getPath('userData'), 'window.json'); // apart from settings.json, which the renderer rewrites whole
@@ -32,8 +70,7 @@ function saveWindowState() {
   if (!win || win.isDestroyed()) return;
   try {
     const b = win.getNormalBounds(); // the restored size, even while maximized
-    fs.mkdirSync(path.dirname(windowFile()), { recursive: true });
-    fs.writeFileSync(windowFile(), JSON.stringify({ ...b, maximized: win.isMaximized() }));
+    writeFileAtomic(windowFile(), JSON.stringify({ ...b, maximized: win.isMaximized() }));
   } catch { /* not worth interrupting the user */ }
 }
 
@@ -73,11 +110,11 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => app.quit());
 
-ipcMain.handle('dlg:folder', async (_e, defaultPath) => {
+handle('dlg:folder', async (_e, defaultPath) => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath });
   return r.canceled ? null : r.filePaths[0];
 });
-ipcMain.handle('dlg:images', async (_e, opts = {}) => {
+handle('dlg:images', async (_e, opts = {}) => {
   const r = await dialog.showOpenDialog(win, {
     properties: opts.multi ? ['openFile', 'multiSelections'] : ['openFile'],
     filters: IMG_FILTER,
@@ -85,13 +122,13 @@ ipcMain.handle('dlg:images', async (_e, opts = {}) => {
   });
   return r.canceled ? [] : r.filePaths;
 });
-ipcMain.handle('dlg:save', async (_e, defaultPath, ext = 'webp') => {
+handle('dlg:save', async (_e, defaultPath, ext = 'webp') => {
   const r = await dialog.showSaveDialog(win, { defaultPath, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
   return r.canceled ? null : r.filePath;
 });
 
 // Non-recursive scan. Same base name in several formats: webp wins, then png, then jpg (as art_batch_tokenize.py does).
-ipcMain.handle('fs:list', async (_e, dir) => {
+handle('fs:list', async (_e, dir) => {
   const entries = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile() && IMG_EXT.test(d.name));
   const best = new Map();
   for (const d of entries) {
@@ -105,8 +142,12 @@ ipcMain.handle('fs:list', async (_e, dir) => {
   const files = [...best.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
   return { dir, files: files.map(({ name, base, path: p }) => ({ name, base, path: p })), names: entries.map((d) => d.name.toLowerCase()) };
 });
-ipcMain.handle('fs:read', async (_e, p) => fs.readFileSync(p));
-ipcMain.handle('fs:write', async (_e, p, bytes) => {
+handle('fs:read', async (_e, p) => {
+  if (typeof p !== 'string' || !IMG_EXT.test(p)) throw new Error('Only image files can be opened.');
+  return fs.readFileSync(p);
+});
+handle('fs:write', async (_e, p, bytes) => {
+  if (typeof p !== 'string' || !WRITE_EXT.test(p)) throw new Error('Only images (PNG, WebP, JPEG) and ZIP files can be saved.');
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, Buffer.from(bytes));
   return true;
@@ -149,9 +190,9 @@ function getCleanSession(name) {
   return job;
 }
 
-ipcMain.handle('models:list', async () => listCleanModels());
+handle('models:list', async () => listCleanModels());
 /** rgba: straight RGBA bytes. The model sees RGB only; the alpha channel is returned unchanged. */
-ipcMain.handle('models:clean', (e, ...args) => { // queued: two screens running models at once would hold two sets of full-size buffers
+handle('models:clean', (e, ...args) => { // queued: two screens running models at once would hold two sets of full-size buffers
   const job = cleanQueue.then(() => runClean(e, ...args));
   cleanQueue = job.catch(() => {});
   return job;
@@ -182,19 +223,26 @@ async function runClean(e, name, rgba, w, h, reqId) { // reqId comes back on eve
   return { rgba: result.rgba, w: result.w, h: result.h, scale: meta.scale, ms: Date.now() - t, provider };
 }
 
-ipcMain.handle('app:defaultFrame', async () => path.join(__dirname, 'assets', 'default.webp'));
-ipcMain.handle('fs:exists', async (_e, p) => fs.existsSync(p));
-ipcMain.handle('fs:isDir', async (_e, p) => {
+handle('app:defaultFrame', async () => path.join(__dirname, 'assets', 'default.webp'));
+handle('fs:exists', async (_e, p) => fs.existsSync(p));
+handle('fs:isDir', async (_e, p) => {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 });
 
-ipcMain.handle('settings:get', async () => {
-  try { return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); } catch { return {}; }
-});
-ipcMain.handle('settings:set', async (_e, data) => {
-  fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
-  fs.writeFileSync(settingsFile(), JSON.stringify(data, null, 2));
+handle('settings:get', async () => readJson(settingsFile()));
+handle('settings:set', async (_e, data) => {
+  writeFileAtomic(settingsFile(), JSON.stringify(data, null, 2));
   return true;
+});
+// The window is closing: the renderer hands over what it had not saved yet (its saves wait 500 ms), synchronously, so nothing is lost on a quick close.
+ipcMain.on('app:flushSync', (e, settings, edits) => {
+  try {
+    if (fromApp(e)) {
+      if (settings) writeFileAtomic(settingsFile(), JSON.stringify(settings, null, 2));
+      if (edits) writeFileAtomic(editsFile(), JSON.stringify(edits));
+    }
+    e.returnValue = true;
+  } catch { e.returnValue = false; }
 });
 
 // ---------------------------------------------------------------- AI background removal (RMBG-2.0, FP16 ONNX)
@@ -213,10 +261,10 @@ const modelReady = () => {
   try { return fs.statSync(modelFile()).size === MODEL_SIZE; } catch { return false; }
 };
 
-ipcMain.handle('ai:status', async () => ({ ready: modelReady(), sizeMB: Math.round(MODEL_SIZE / 1e6), provider: ortProvider }));
+handle('ai:status', async () => ({ ready: modelReady(), sizeMB: Math.round(MODEL_SIZE / 1e6), provider: ortProvider }));
 
 let downloading = null; // the download in progress: a second request (another screen) shares it instead of writing the same .part file
-ipcMain.handle('ai:download', (e) => {
+handle('ai:download', (e) => {
   if (!downloading) downloading = downloadModel(e.sender).finally(() => { downloading = null; });
   return downloading;
 });
@@ -247,7 +295,7 @@ async function downloadModel(sender) {
 }
 
 // Fallback when the download is blocked: copy a model_fp16.onnx the user already has into place.
-ipcMain.handle('ai:chooseModel', async () => {
+handle('ai:chooseModel', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'ONNX model', extensions: ['onnx'] }] });
   if (r.canceled) return false;
   if (fs.statSync(r.filePaths[0]).size !== MODEL_SIZE) throw new Error('That is not the RMBG-2.0 FP16 model (unexpected file size).');
@@ -298,18 +346,15 @@ async function runMatte(rgb) {
 }
 
 // One inference at a time: the model is big and a second concurrent run would double the memory use.
-ipcMain.handle('ai:matte', (_e, rgb) => {
+handle('ai:matte', (_e, rgb) => {
   const job = aiQueue.then(() => runMatte(rgb));
   aiQueue = job.catch(() => {});
   return job;
 });
 
 // Per-image overrides and manual cutout edits, keyed by source path; kept apart from settings.json because they can get large.
-ipcMain.handle('edits:get', async () => {
-  try { return JSON.parse(fs.readFileSync(editsFile(), 'utf8')); } catch { return {}; }
-});
-ipcMain.handle('edits:set', async (_e, data) => {
-  fs.mkdirSync(path.dirname(editsFile()), { recursive: true });
-  fs.writeFileSync(editsFile(), JSON.stringify(data));
+handle('edits:get', async () => readJson(editsFile()));
+handle('edits:set', async (_e, data) => {
+  writeFileAtomic(editsFile(), JSON.stringify(data));
   return true;
 });
