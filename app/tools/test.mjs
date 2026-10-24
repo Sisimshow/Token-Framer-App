@@ -896,14 +896,14 @@ async function main() {
       check('Pixel-perfect pen with real mouse input: a diagonal drawn as a staircase of right/down moves erases exactly the 1 px diagonal', J(got) === J(diag), J(got));
       await app.ev(`(__tf.bgremove.setTool('brush'), __tf.bgremove.close(), 1)`);
     }
-    // pen feedback and strokes with REAL mouse input: the square is drawn at its TRUE size (a tiny block gets a halo) and the native cursor is hidden over it, a zoomed-out pen says why it cannot hit each pixel,
+    // pen feedback and strokes with REAL mouse input: the square is drawn at its TRUE size and the native cursor is hidden over it, a zoomed-out pen says why it cannot hit each pixel,
     // the square stays on the pixel that will be painted while a click is still inside its dead zone, and a stroke ends where the button was let go (main window and Remove background screen)
     {
       const MX = 600, MY = 450, markP = path.join(work, 'Marker.png');
       const mouse = (type, x, y, extra = {}) => app.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
       const last = () => app.ev(`(() => { const e = __tf.items[__tf.cur].override.popEdits?.at(-1); return e ? e.pts : null; })()`);
       const undoAll = () => app.ev(`(() => { while (__tf.items[__tf.cur].override.popEdits?.length) __tf.undo(); return 1; })()`);
-      const ringState = (sel, cur) => app.ev(`(() => { const r = document.querySelector('${sel}'), b = r.getBoundingClientRect(); return { w: parseFloat(r.style.width), left: b.left, tiny: r.classList.contains('tiny'), pen: r.classList.contains('pen'), hidden: r.hidden, cursor: getComputedStyle(document.querySelector('${cur}')).cursor }; })()`);
+      const ringState = (sel, cur) => app.ev(`(() => { const r = document.querySelector('${sel}'), b = r.getBoundingClientRect(); return { w: parseFloat(r.style.width), left: b.left, pen: r.classList.contains('pen'), hidden: r.hidden, cursor: getComputedStyle(document.querySelector('${cur}')).cursor }; })()`);
       // ---- main window
       await app.ev(`(async () => { await __tf.openImages([${J(markP)}]); await new Promise((r) => setTimeout(r, 1200)); __tf.shared.brushSize = 1; __tf.shared.brushMode = 'erase'; if (__tf.tool !== 'brush') __tf.setTool('brush'); document.querySelector('#status').textContent = ''; return 1; })()`);
       const vr = await app.ev(`(() => { const r = document.querySelector('#view').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
@@ -931,10 +931,10 @@ async function main() {
       await mouse('mouseMoved', m.x, m.y); await mouse('mouseReleased', z.x, z.y); await sleep(150);
       const dragPts = await last(); await undoAll();
       await app.ev(`(() => { document.querySelector('#view').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); __tf.setTool('brush'); __tf.shared.brushSize = 40; return 1; })()`);
-      const mainOk = afterTool.cursor !== 'none' && fit.pen && fit.tiny && fit.w < 1.2 && fit.cursor === 'none' && /Zoomed out/.test(fit.status) && pxCss >= 6 && zoomed.pen && !zoomed.tiny && Math.abs(zoomed.w - pxCss) < 1.2 && zoomed.cursor === 'none'
+      const mainOk = afterTool.cursor !== 'none' && fit.pen && fit.w < 1.2 && fit.cursor === 'none' && /Zoomed out/.test(fit.status) && pxCss >= 6 && zoomed.pen && Math.abs(zoomed.w - pxCss) < 1.2 && zoomed.cursor === 'none'
         && Math.abs(stuck.left - c0.x) < 1.2 && clickPts && clickPts.length === 1 && clickPts[0][0] === MX && clickPts[0][1] === MY
         && dragPts && dragPts.length === 10 && dragPts[0][0] === MX && dragPts.at(-1)[0] === MX + 9 && dragPts.at(-1)[1] === MY;
-      check('Pen feedback in the main window: the square is drawn at its true size (tiny one: a halo), the native cursor is hidden over it, zooming out is called out, the square stays on the painted pixel during a click, and a stroke ends where the button was let go', mainOk, J({ fit, pxCss, zoomed, afterTool: afterTool.cursor, stuck: stuck.left - c0.x, clickPts, dragPts: dragPts && [dragPts.length, dragPts[0], dragPts.at(-1)] }));
+      check('Pen feedback in the main window: the square is drawn at its true size, the native cursor is hidden over it, zooming out is called out, the square stays on the painted pixel during a click, and a stroke ends where the button was let go', mainOk, J({ fit, pxCss, zoomed, afterTool: afterTool.cursor, stuck: stuck.left - c0.x, clickPts, dragPts: dragPts && [dragPts.length, dragPts[0], dragPts.at(-1)] }));
       // ---- Remove background screen
       await app.ev(`(async () => { document.querySelector('#btnTools').click(); await new Promise((r) => setTimeout(r, 100)); document.querySelector('#btnRemoveImage').click(); await new Promise((r) => setTimeout(r, 300));
         await __tf.bgremove.loadPath(${J(markP)}); await new Promise((r) => setTimeout(r, 300)); __tf.bgremove.setParams({ brushSize: 1, brushMode: 'erase' }); if (__tf.bgremove.tool !== 'brush') __tf.bgremove.setTool('brush'); document.querySelector('#brMsg').textContent = ''; return 1; })()`);
@@ -949,7 +949,7 @@ async function main() {
       await mouse('mouseMoved', bm.x, bm.y); await mouse('mouseReleased', bz.x, bz.y); await sleep(200);
       const row = await app.ev(`(() => { const g = __tf.bgremove.result.getContext('2d').getImageData(${MX - 2}, ${MY}, 16, 1).data, o = []; for (let i = 0; i < 16; i++) o.push(g[i * 4 + 3] === 0 ? 1 : 0); return o.join(''); })()`);
       await app.ev(`(__tf.bgremove.setTool('brush'), __tf.bgremove.close(), 1)`);
-      check('Pen feedback in the Remove background screen: true-size square with a halo when tiny, native cursor hidden, zoomed-out message, and the stroke ends where the button was let go', bfit.pen && bfit.tiny && bfit.w < 1.2 && bfit.cursor === 'none' && /Zoomed out/.test(bfit.msg) && bpx >= 3 && row === '0011111111110000', J({ bfit, bpx, row }));
+      check('Pen feedback in the Remove background screen: true-size square, native cursor hidden, zoomed-out message, and the stroke ends where the button was let go', bfit.pen && bfit.w < 1.2 && bfit.cursor === 'none' && /Zoomed out/.test(bfit.msg) && bpx >= 3 && row === '0011111111110000', J({ bfit, bpx, row }));
     }
 
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);

@@ -924,17 +924,15 @@ function toolMove(e) {
     const perPx = (1 / pp.scale) * (vr.width / PREVIEW) * state.view.z;
     const pen = penSize(eff().brushSize);
     ring.classList.toggle('pen', !!pen);
-    if (pen) { // the pen paints whole pixels: show the exact block the next click will hit, snapped to the pixel grid, at its TRUE size (a block under 6 px gets a halo so it can still be found)
+    if (pen) { // the pen paints whole pixels: show the exact block the next click will hit, snapped to the pixel grid, at its TRUE size
       // while a click is still inside its dead zone the stroke is stuck on its first pixel, so the square stays there too
       const st = state.stroke, stuck = st?.pen && !st.moved && Math.hypot(e.clientX - st.downX, e.clientY - st.downY) < PEN_DEAD_ZONE;
       const b = penBlockRect(stuck ? st.pts[0] : penAnchorAt(e, pen), pen);
-      ring.classList.toggle('tiny', Math.min(b.w, b.h) < 6);
       ring.style.width = `${b.w}px`; ring.style.height = `${b.h}px`;
       ring.style.left = `${b.l - ox}px`;
       ring.style.top = `${b.t - oy}px`;
       penZoomHint(perPx * devicePixelRatio);
     } else {
-      ring.classList.remove('tiny');
       ring.style.width = ring.style.height = `${Math.max(3, eff().brushSize * perPx)}px`;
       ring.style.left = `${e.clientX - ox}px`; // centred on the pointer (translate -50% in the CSS)
       ring.style.top = `${e.clientY - oy}px`;

@@ -346,16 +346,14 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
       const pen = penSize(params.brushSize), perPx = cssPerPx();   // on-screen px per source pixel
       const d = Math.max(3, params.brushSize * perPx);                // brush size is in source pixels
       ring.classList.toggle('pen', !!pen);
-      if (pen) { // the pen paints whole pixels: show the exact block that the next click will hit, snapped to the pixel grid, at its TRUE size (a block under 6 px gets a halo so it can still be found)
+      if (pen) { // the pen paints whole pixels: show the exact block that the next click will hit, snapped to the pixel grid, at its TRUE size
         // while a click is still inside its dead zone the stroke is stuck on its first pixel, so the square stays there too
         const stuck = stroke?.pen && !stroke.moved && Math.hypot(e.clientX - stroke.downX, e.clientY - stroke.downY) < 4;
         const q = srcPoint(e), a = stuck ? stroke.pts[0] : penAnchor(q.x, q.y, pen), lt = clientOf(a[0], a[1]), rb = clientOf(a[0] + pen, a[1] + pen);   // the block's own corners: the square IS those pixels
-        ring.classList.toggle('tiny', Math.min(rb.x - lt.x, rb.y - lt.y) < 6);
         ring.style.width = `${rb.x - lt.x}px`; ring.style.height = `${rb.y - lt.y}px`;
         ring.style.left = `${lt.x - sr.left}px`; ring.style.top = `${lt.y - sr.top}px`;
         penZoomHint(perPx * devicePixelRatio);
       } else {
-        ring.classList.remove('tiny');
         ring.style.width = ring.style.height = `${d}px`;
         ring.style.left = `${e.clientX - sr.left}px`; ring.style.top = `${e.clientY - sr.top}px`;
       }
