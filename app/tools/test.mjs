@@ -470,6 +470,13 @@ async function main() {
       o.resetMid = { patching: __tf.extend.patching, cancelHidden: q('#exCancel').hidden, mode: __tf.extend.params.mode, top: __tf.extend.params.top };
       await jobD;
       await __tf.extend.setParams({ mode: 'patch', link: false, top: 40, bottom: 40, left: 40, right: 40, seed: 1 });
+      // switching to Patch fill while a Mirror preview is still being computed must not leave the screen busy (Process stuck off)
+      await __tf.extend.setParams({ mode: 'mirror', top: 200, bottom: 200, left: 200, right: 200 });
+      __tf.extend.setParams({ blur: 0.4 });                             // a Mirror run in flight (not awaited)
+      await __tf.extend.setParams({ mode: 'patch' });                   // the placeholder takes over
+      await wait(400);
+      o.switched = { busy: __tf.extend.busy, processOn: !q('#exProcess').disabled, placeholder: __tf.extend.placeholder };
+      await __tf.extend.setParams({ mode: 'patch', blur: 0.25, link: false, top: 40, bottom: 40, left: 40, right: 40, seed: 1 });
       // an image with transparency: Patch fill refuses it, Mirror still works
       const c = document.createElement('canvas'); c.width = 120; c.height = 90; const x = c.getContext('2d'); x.fillStyle = '#3a7'; x.fillRect(0, 0, 120, 90); x.clearRect(0, 0, 30, 30);
       await window.api.writeFile(${J(pxP)}, new Uint8Array(await (await new Promise((res) => c.toBlob(res, 'image/png'))).arrayBuffer()));
@@ -483,6 +490,7 @@ async function main() {
     check('Extend edges: Patch fill shows a placeholder (Save off, Process on) until Process; Process shows progress and Cancel, then gives a full opaque result with the picture untouched', pu.rows.includes('Patch size') && pu.rows.includes('Source band') && !pu.rows.includes('Soften with distance') && pu.placeholder.placeholder && !pu.placeholder.full && pu.placeholder.saveOff && pu.placeholder.processOn && pu.placeholder.w === 480 && pu.running.patching && pu.running.cancelShown && pu.running.progShown && pu.running.processOff && pu.running.saveOff && pu.done.patched && pu.done.full && pu.done.saveOn && pu.done.w === 480 && pu.done.h === 380 && pu.done.cancelHidden && pu.done.processOff && pu.done.same && pu.done.opaque, J(pu));
     check('Extend edges: changing Variation drops the fill; Cancel stops a running fill (nothing saved, nothing stuck) and Process works again; changing a setting mid-run does not leave it busy', !pu.changed.patched && pu.changed.placeholder && pu.changed.saveOff && !pu.cancelled.patching && !pu.cancelled.patched && pu.cancelled.saveOff && pu.cancelled.processOn && /Cancelled/.test(pu.cancelled.msg) && pu.cancelled.cancelHidden && pu.again.patched && pu.again.w === 480 && !pu.interrupted.patching && !pu.interrupted.patched && pu.interrupted.placeholder && pu.interrupted.processOn, J({ changed: pu.changed, cancelled: pu.cancelled, again: pu.again, interrupted: pu.interrupted }));
     check('Extend edges: toggling the outline mid-run leaves a Patch fill running to completion; Pad to square or Reset mid-run stops it cleanly (no stuck Cancel/progress) and the placeholder arrives promptly', pu.outlineMid.patching && pu.outlineDone.patched && pu.outlineDone.saveOn && !pu.padMid.patching && pu.padMid.cancelHidden && pu.padMid.progHidden && pu.padMid.placeholder && pu.padMid.ms < 4000 && pu.padMid.w === 400 && pu.padMid.h === 400 && !pu.resetMid.patching && pu.resetMid.cancelHidden && pu.resetMid.mode === 'patch' && pu.resetMid.top === 0, J({ outlineMid: pu.outlineMid, outlineDone: pu.outlineDone, padMid: pu.padMid, resetMid: pu.resetMid }));
+    check('Extend edges: switching to Patch fill while a Mirror preview is still running leaves the screen usable (not busy, Process on)', !pu.switched.busy && pu.switched.processOn && pu.switched.placeholder, J(pu.switched));
     check('Extend edges: Patch fill refuses an image with transparency (Process off, says why) while Mirror still extends it', pu.alpha.processOff && /opaque/.test(pu.alpha.msg) && !pu.alpha.result && pu.alphaMirror.w === 200 && pu.alphaMirror.full, J({ alpha: pu.alpha, mirror: pu.alphaMirror }));
 
     // a big result is previewed at reduced size and only Process builds (and lets you save) the full image

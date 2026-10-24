@@ -169,7 +169,7 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
     if (!job || !hasPad()) { result = null; runReq++; busy = false; refreshButtons(); redraw(); return; }
     const { w, h } = outSize(), key = keyOf(), p = pad(), isPatch = params.mode === 'patch';
     if (w * h > MAX_EXTEND_PIXELS) { setMsg(`That would be ${w}×${h} (${(w * h / 1e6).toFixed(0)} megapixels), more than the ${MAX_EXTEND_PIXELS / 1e6} megapixel limit.`, true); return; }
-    if (isPatch && !job.opaque) { setMsg('Patch fill works on opaque images only. This one has transparency: use Mirror or Smear.', true); result = null; runReq++; refreshButtons(); redraw(); return; }
+    if (isPatch && !job.opaque) { setMsg('Patch fill works on opaque images only. This one has transparency: use Mirror or Smear.', true); result = null; runReq++; busy = false; refreshButtons(); redraw(); return; }   // (a superseded run's finally no longer clears busy)
     if (manual && isPatch && w * h > PATCH_MAX_PIXELS) { setMsg(`Patch fill is limited to ${PATCH_MAX_PIXELS / 1e6} megapixels (this would be ${w}×${h}, ${(w * h / 1e6).toFixed(0)}). Use less padding, or Mirror/Smear.`, true); return; }
     if (manual && isPatch) {
       const added = (w * h - job.w * job.h) / 1e6, secs = added * PATCH_SECONDS_PER_MPX * (params.patch / 7) ** 2 * (params.iterations / 4);
@@ -203,6 +203,7 @@ export function initExtendEdges({ api, openImages, dirOf, sepOf, baseOf }) {
       g.stroke();
       g.imageSmoothingQuality = 'high'; g.drawImage(job.canvas, inner.x, inner.y, inner.w, inner.h);
       result = { canvas: c, key, w, h, full: false, inner, placeholder: true };
+      busy = false;   // a Mirror/Smear run still in the worker is superseded (its finally only clears busy for the current request)
       setMsg(`Patch fill is made when you press Process (it can take a while). The hatched area is where the new border will go.${tail()}`);
       refreshButtons(); redraw();
       return;

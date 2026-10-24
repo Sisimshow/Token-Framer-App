@@ -129,6 +129,8 @@ export function patchFill(init, W, H, known, opts = {}, onProgress = () => {}) {
         }
       }
       for (let k = 0; k < count; k++) { const u = order[k]; if (wsum[u] > 0) { img[u * 3] = acc[u * 3] / wsum[u]; img[u * 3 + 1] = acc[u * 3 + 1] / wsum[u]; img[u * 3 + 2] = acc[u * 3 + 2] / wsum[u]; } }
+      // the picture just changed: every current match is re-scored against it, or the next sweep would keep matches whose old (lower) score no longer holds
+      for (let k = 0; k < count; k++) { const i = order[k]; nd[i] = dist(img, wt, lw, lh, i % lw, (i / lw) | 0, nx[i], ny[i], r, Infinity); }
     };
     /** One PatchMatch pass: each pixel tries its already-visited neighbours' answers (shifted), then random guesses at shrinking distances around its best. */
     const sweep = (forward) => {
