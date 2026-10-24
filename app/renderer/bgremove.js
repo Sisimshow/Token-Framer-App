@@ -295,6 +295,27 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
     if (removed.length) redraw();
   }
 
+  let penHinted = false;
+  /** Said once while the pen is used zoomed so far out that a screen pixel covers several image pixels: the mouse physically cannot reach every pixel then. */
+  function penZoomHint(devPerPx) {
+    if (devPerPx >= 1) { penHinted = false; return; }
+    if (penHinted) return;
+    penHinted = true;
+    setMsg(`Zoomed out: one screen pixel covers about ${Math.ceil(1 / devPerPx)} image pixels, so the pen cannot hit each one. Scroll to zoom in until a pixel is at least a screen pixel wide.`);
+  }
+  /** One pointer sample of a brush stroke (a pen sample goes through the click dead zone and the pixel-perfect path). Fast drags deliver several samples per event: the caller feeds them all. */
+  function strokeStep(e) {
+    const s = stroke;
+    if (!s) return;
+    const p = srcPoint(e), last = s.pts[s.pts.length - 1];
+    if (s.pen) {
+      if (!s.moved && Math.hypot(e.clientX - s.downX, e.clientY - s.downY) < 4) return; // a click is one pixel even if the hand shakes a little while pressing
+      s.moved = true;
+      const a = penAnchor(p.x, p.y, s.pen);
+      if (a[0] !== last[0] || a[1] !== last[1]) { s.pts.push(a); if (s.path) livePenPath(a); else liveBrush([last, a]); }
+    } else if (Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, s.r / 4)) { s.pts.push([p.x, p.y]); liveBrush([last, [p.x, p.y]]); }
+  }
+
   const panning = (e) => space || e.button === 1;
   canvas.addEventListener('pointerdown', (e) => {
     if (!src) return;
@@ -325,24 +346,24 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
       const pen = penSize(params.brushSize), perPx = cssPerPx();   // on-screen px per source pixel
       const d = Math.max(3, params.brushSize * perPx);                // brush size is in source pixels
       ring.classList.toggle('pen', !!pen);
-      if (pen) { // the pen paints whole pixels: show the exact block that the next click will hit, snapped to the pixel grid
-        const q = srcPoint(e), a = penAnchor(q.x, q.y, pen), lt = clientOf(a[0], a[1]), rb = clientOf(a[0] + pen, a[1] + pen);   // the block's own corners: the square IS those pixels
-        ring.style.width = `${Math.max(3, rb.x - lt.x)}px`; ring.style.height = `${Math.max(3, rb.y - lt.y)}px`;
+      if (pen) { // the pen paints whole pixels: show the exact block that the next click will hit, snapped to the pixel grid, at its TRUE size (a block under 6 px gets a halo so it can still be found)
+        // while a click is still inside its dead zone the stroke is stuck on its first pixel, so the square stays there too
+        const stuck = stroke?.pen && !stroke.moved && Math.hypot(e.clientX - stroke.downX, e.clientY - stroke.downY) < 4;
+        const q = srcPoint(e), a = stuck ? stroke.pts[0] : penAnchor(q.x, q.y, pen), lt = clientOf(a[0], a[1]), rb = clientOf(a[0] + pen, a[1] + pen);   // the block's own corners: the square IS those pixels
+        ring.classList.toggle('tiny', Math.min(rb.x - lt.x, rb.y - lt.y) < 6);
+        ring.style.width = `${rb.x - lt.x}px`; ring.style.height = `${rb.y - lt.y}px`;
         ring.style.left = `${lt.x - sr.left}px`; ring.style.top = `${lt.y - sr.top}px`;
+        penZoomHint(perPx * devicePixelRatio);
       } else {
+        ring.classList.remove('tiny');
         ring.style.width = ring.style.height = `${d}px`;
         ring.style.left = `${e.clientX - sr.left}px`; ring.style.top = `${e.clientY - sr.top}px`;
       }
       ring.hidden = false;
     } else ring.hidden = true;
     if (stroke) {
-      const p = srcPoint(e), last = stroke.pts[stroke.pts.length - 1];
-      if (stroke.pen) {
-        if (!stroke.moved && Math.hypot(e.clientX - stroke.downX, e.clientY - stroke.downY) < 4) return; // a click is one pixel even if the hand shakes a little while pressing
-        stroke.moved = true;
-        const a = penAnchor(p.x, p.y, stroke.pen);
-        if (a[0] !== last[0] || a[1] !== last[1]) { stroke.pts.push(a); if (stroke.path) livePenPath(a); else liveBrush([last, a]); }
-      } else if (Math.hypot(p.x - last[0], p.y - last[1]) >= Math.max(1, stroke.r / 4)) { stroke.pts.push([p.x, p.y]); liveBrush([last, [p.x, p.y]]); }
+      const samples = e.getCoalescedEvents?.();
+      for (const ev of samples?.length ? samples : [e]) strokeStep(ev);   // every sample the mouse gave, not just the last one per frame
     } else if (rect) {
       band.hidden = false;
       band.style.left = `${Math.min(rect.vx, e.clientX) - sr.left}px`; band.style.top = `${Math.min(rect.vy, e.clientY) - sr.top}px`;
@@ -353,6 +374,7 @@ export function initBgRemover({ api, openImages, loadFrame, dirOf, sepOf, baseOf
   const pointerEnd = (e) => {
     pan = null;
     if (stroke) {
+      if (stroke.pen) strokeStep(e);   // where the button was let go counts, even if no move event reported it
       const s = stroke; stroke = null;
       const r1 = (v) => Math.round(v * 10) / 10;
       if (s.pen) pushEdit({ type: 'brush', mode: s.mode, r: s.pen / 2, px: s.pen, pts: s.path || s.pts });   // pen: integer pixels, kept exactly (1 px: the pixel-perfect path)

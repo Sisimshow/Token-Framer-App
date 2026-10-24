@@ -896,6 +896,62 @@ async function main() {
       check('Pixel-perfect pen with real mouse input: a diagonal drawn as a staircase of right/down moves erases exactly the 1 px diagonal', J(got) === J(diag), J(got));
       await app.ev(`(__tf.bgremove.setTool('brush'), __tf.bgremove.close(), 1)`);
     }
+    // pen feedback and strokes with REAL mouse input: the square is drawn at its TRUE size (a tiny block gets a halo) and the native cursor is hidden over it, a zoomed-out pen says why it cannot hit each pixel,
+    // the square stays on the pixel that will be painted while a click is still inside its dead zone, and a stroke ends where the button was let go (main window and Remove background screen)
+    {
+      const MX = 600, MY = 450, markP = path.join(work, 'Marker.png');
+      const mouse = (type, x, y, extra = {}) => app.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
+      const last = () => app.ev(`(() => { const e = __tf.items[__tf.cur].override.popEdits?.at(-1); return e ? e.pts : null; })()`);
+      const undoAll = () => app.ev(`(() => { while (__tf.items[__tf.cur].override.popEdits?.length) __tf.undo(); return 1; })()`);
+      const ringState = (sel, cur) => app.ev(`(() => { const r = document.querySelector('${sel}'), b = r.getBoundingClientRect(); return { w: parseFloat(r.style.width), left: b.left, tiny: r.classList.contains('tiny'), pen: r.classList.contains('pen'), hidden: r.hidden, cursor: getComputedStyle(document.querySelector('${cur}')).cursor }; })()`);
+      // ---- main window
+      await app.ev(`(async () => { await __tf.openImages([${J(markP)}]); await new Promise((r) => setTimeout(r, 1200)); __tf.shared.brushSize = 1; __tf.shared.brushMode = 'erase'; if (__tf.tool !== 'brush') __tf.setTool('brush'); document.querySelector('#status').textContent = ''; return 1; })()`);
+      const vr = await app.ev(`(() => { const r = document.querySelector('#view').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await mouse('mouseMoved', vr.x, vr.y, { buttons: 0 }); await sleep(100);
+      const fit = { ...(await ringState('#brushRing', '#view')), status: await app.ev(`document.querySelector('#status').textContent`) };
+      for (let i = 0; i < 24; i++) { await app.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: vr.x, y: vr.y, deltaX: 0, deltaY: -100 }); await sleep(120); }
+      await sleep(500);
+      const at = (x, y) => app.ev(`__tf.clientOfSrc(${x}, ${y})`);
+      const c0 = await at(MX, MY + 0.5), c1 = await at(MX + 1, MY + 0.5), pxCss = c1.x - c0.x;
+      await mouse('mouseMoved', c0.x + pxCss / 2, c0.y, { buttons: 0 }); await sleep(100);
+      const zoomed = await ringState('#brushRing', '#view');
+      await app.ev(`(() => { __tf.setTool('wand'); return 1; })()`); await sleep(60);   // switching tool hides the square: the native cursor must be back at once
+      const afterTool = await ringState('#brushRing', '#view');
+      await app.ev(`(() => { __tf.setTool('brush'); return 1; })()`); await mouse('mouseMoved', c0.x + pxCss / 2 + 1, c0.y, { buttons: 0 }); await sleep(60);
+      // dead zone: press just left of a pixel boundary, move 3 CSS px across it (under the 4 px dead zone): the square and the stroke both stay on the first pixel
+      await undoAll(); await sleep(200);
+      await mouse('mouseMoved', c1.x - 1, c1.y, { buttons: 0 }); await mouse('mousePressed', c1.x - 1, c1.y);
+      await mouse('mouseMoved', c1.x + 2, c1.y); await sleep(100);
+      const stuck = await ringState('#brushRing', '#view');
+      await mouse('mouseReleased', c1.x + 2, c1.y); await sleep(100);
+      const clickPts = await last(); await undoAll(); await sleep(200);
+      // release endpoint: press on a pixel, drag past the dead zone, let go on a farther pixel WITHOUT a move event there
+      const a = await at(MX + 0.5, MY + 0.5), m = await at(MX + 5.5, MY + 0.5), z = await at(MX + 9.5, MY + 0.5);
+      await mouse('mouseMoved', a.x, a.y, { buttons: 0 }); await mouse('mousePressed', a.x, a.y);
+      await mouse('mouseMoved', m.x, m.y); await mouse('mouseReleased', z.x, z.y); await sleep(150);
+      const dragPts = await last(); await undoAll();
+      await app.ev(`(() => { document.querySelector('#view').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); __tf.setTool('brush'); __tf.shared.brushSize = 40; return 1; })()`);
+      const mainOk = afterTool.cursor !== 'none' && fit.pen && fit.tiny && fit.w < 1.2 && fit.cursor === 'none' && /Zoomed out/.test(fit.status) && pxCss >= 6 && zoomed.pen && !zoomed.tiny && Math.abs(zoomed.w - pxCss) < 1.2 && zoomed.cursor === 'none'
+        && Math.abs(stuck.left - c0.x) < 1.2 && clickPts && clickPts.length === 1 && clickPts[0][0] === MX && clickPts[0][1] === MY
+        && dragPts && dragPts.length === 10 && dragPts[0][0] === MX && dragPts.at(-1)[0] === MX + 9 && dragPts.at(-1)[1] === MY;
+      check('Pen feedback in the main window: the square is drawn at its true size (tiny one: a halo), the native cursor is hidden over it, zooming out is called out, the square stays on the painted pixel during a click, and a stroke ends where the button was let go', mainOk, J({ fit, pxCss, zoomed, afterTool: afterTool.cursor, stuck: stuck.left - c0.x, clickPts, dragPts: dragPts && [dragPts.length, dragPts[0], dragPts.at(-1)] }));
+      // ---- Remove background screen
+      await app.ev(`(async () => { document.querySelector('#btnTools').click(); await new Promise((r) => setTimeout(r, 100)); document.querySelector('#btnRemoveImage').click(); await new Promise((r) => setTimeout(r, 300));
+        await __tf.bgremove.loadPath(${J(markP)}); await new Promise((r) => setTimeout(r, 300)); __tf.bgremove.setParams({ brushSize: 1, brushMode: 'erase' }); if (__tf.bgremove.tool !== 'brush') __tf.bgremove.setTool('brush'); document.querySelector('#brMsg').textContent = ''; return 1; })()`);
+      const bc = await app.ev(`(() => { const r = document.querySelector('#brPreview').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await mouse('mouseMoved', bc.x, bc.y, { buttons: 0 }); await sleep(100);
+      const bfit = { ...(await ringState('.brRing', '#brPreview')), msg: await app.ev(`document.querySelector('#brMsg').textContent`) };
+      for (let i = 0; i < 14; i++) { await app.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: bc.x, y: bc.y, deltaX: 0, deltaY: -100 }); await sleep(100); }
+      await sleep(400);
+      const bat = (x, y) => app.ev(`__tf.bgremove.clientOf(${x}, ${y})`);
+      const b0 = await bat(MX + 0.5, MY + 0.5), bm = await bat(MX + 5.5, MY + 0.5), bz = await bat(MX + 9.5, MY + 0.5), bpx = (await bat(MX + 1, MY + 0.5)).x - (await bat(MX, MY + 0.5)).x;
+      await mouse('mouseMoved', b0.x, b0.y, { buttons: 0 }); await mouse('mousePressed', b0.x, b0.y);
+      await mouse('mouseMoved', bm.x, bm.y); await mouse('mouseReleased', bz.x, bz.y); await sleep(200);
+      const row = await app.ev(`(() => { const g = __tf.bgremove.result.getContext('2d').getImageData(${MX - 2}, ${MY}, 16, 1).data, o = []; for (let i = 0; i < 16; i++) o.push(g[i * 4 + 3] === 0 ? 1 : 0); return o.join(''); })()`);
+      await app.ev(`(__tf.bgremove.setTool('brush'), __tf.bgremove.close(), 1)`);
+      check('Pen feedback in the Remove background screen: true-size square with a halo when tiny, native cursor hidden, zoomed-out message, and the stroke ends where the button was let go', bfit.pen && bfit.tiny && bfit.w < 1.2 && bfit.cursor === 'none' && /Zoomed out/.test(bfit.msg) && bpx >= 3 && row === '0011111111110000', J({ bfit, bpx, row }));
+    }
+
     const aiReady = await app.ev(`window.api.getAiStatus().then((s) => s.ready)`);
     if (!aiReady) console.log('SKIP  Remove background AI: the RMBG-2.0 model is not downloaded in the test profile');
     await app.ev(`__tf.loadFrame(${J(path.join(root, 'assets', 'default.webp'))}, { keepOrder: true })`);
