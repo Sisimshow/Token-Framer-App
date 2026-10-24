@@ -122,6 +122,21 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
 - Folder mode skips files with "token" or "frame" in the name (case-insensitive substring), never overwrites an existing
   `<name> Token.<ext>` (webp by default, png optional) unless "Overwrite existing" is on, and writes next to the source.
 
+## Robustness rules (from the Codex reviews; keep them)
+- IPC: every `ipcMain.handle` goes through `handle()` in `main.cjs`, which refuses any sender but the app window. `fs:read` only reads image files (`IMG_EXT`), `fs:write`
+  only writes PNG/WebP/JPEG/ZIP (`WRITE_EXT`): a new file type needs adding there on purpose.
+- `settings.json`, `edits.json`, `window.json` are written with `writeFileAtomic` (temp file + fsync + rename, retried on Windows locks, never a direct rewrite); a file that
+  does not parse is renamed `<name>.corrupt-<time>`, not overwritten. Pending changes (the 500 ms debounces) are written synchronously on `beforeunload` (`app:flushSync`).
+- RMBG-2.0 download: pinned revision `MODEL_REV` and `MODEL_SHA256` (checked while streaming, and for a hand-picked file); one download at a time (`downloading`).
+- Model runs (`models:clean`) run one at a time (`cleanQueue`), sessions are cached as promises, and a run needing more than half the RAM is refused (a strip-based
+  engine would lift that; not done).
+- `state.base.item` is the item the bitmap belongs to: tools and AI remove refuse to act until it is the selected item. `setItems` takes the new items' overrides from
+  the store after flushing the outgoing ones.
+- Saves (`saveCurrent`, `frameAll`, `zipAll`) work from `exportSnapshot()` (shared settings, per-item overrides, size, format, quality, frame, output paths) taken when
+  they start; `loadFrame` defers closing a frame bitmap while `state.saving`. Save all flags two ticked images that would write the same file.
+- Tool screens: the newest load wins (renderer counters and a `loadSeq` in the cleanframe/solveframe workers); a failed or crashed worker clears the screen
+  (`forget`/`forgetAll`) instead of keeping half its state; `makeRpc().crash()` exists for tests. Clean frame asks (`confirmHeavy`) before an image over 25 Mpx.
+
 ## Rules
 - No new npm dependency without asking first (stating the trade-off). The only runtime dependency is `onnxruntime-node` (approved for AI cutout).
 - After changing compositing or mask code, re-run a parity check against the previous output rather than trusting it looks right.

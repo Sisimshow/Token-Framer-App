@@ -26,7 +26,8 @@ const WRITE_EXT = /\.(png|webp|jpe?g|zip)$/i;
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 /**
  * Writes a file so that a crash mid-write can never leave it half written: a temporary file next to it, flushed to disk, then renamed over it. Windows can
- * briefly refuse the rename while Defender, the indexer or OneDrive holds the file: retried a few times, then written directly.
+ * briefly refuse the rename while Defender, the indexer or OneDrive holds the file: retried for about a second; if it still fails the old file is left as it
+ * was and the error is reported (never a direct rewrite, which is exactly what could destroy it).
  */
 function writeFileAtomic(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -35,9 +36,9 @@ function writeFileAtomic(file, data) {
   try { fs.writeSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   for (let i = 0; ; i++) {
     try { fs.renameSync(tmp, file); return; } catch (err) {
-      if (i < 5 && /EPERM|EBUSY|EACCES/.test(err.code)) { sleepSync(40); continue; }
-      try { fs.writeFileSync(file, data); } finally { fs.rmSync(tmp, { force: true }); }
-      return;
+      if (i < 20 && /EPERM|EBUSY|EACCES/.test(err.code)) { sleepSync(50); continue; }
+      fs.rmSync(tmp, { force: true });
+      throw err;
     }
   }
 }

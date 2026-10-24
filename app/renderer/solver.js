@@ -219,7 +219,12 @@ export function initSolver({ api, loadFrame, openImages, dirOf, sepOf, baseOf })
       if (slots.white && slots.black) await run();
       else setMsg(`Now open the ${slot === 'white' ? 'black' : 'white'} render.`);
     } catch (err) {
-      if (req === loadReq[slot]) setMsg(`Could not open that image: ${err.message}`, true);
+      if (req === loadReq[slot]) { // an earlier load may already have changed the worker's render for this slot: show none rather than the wrong one
+        slots[slot] = null; result = null; resultCanvas = null;
+        const l = $(slot === 'white' ? '#svWhiteName' : '#svBlackName'); l.textContent = 'none'; l.title = ''; l.classList.add('muted');
+        refreshButtons(); redraw();
+        setMsg(`Could not open that image: ${err.message}`, true);
+      }
     }
   }
   async function pickSlot(slot) {

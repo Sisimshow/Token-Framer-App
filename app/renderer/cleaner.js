@@ -108,7 +108,7 @@ export function initCleaner({ api, loadFrame, dirOf, sepOf, baseOf }) {
       redraw();
       await run();
     } catch (err) {
-      if (req === loadReq) setMsg(`Could not open that image: ${err.message}`, true);
+      if (req === loadReq) { forget(); setMsg(`Could not open that image: ${err.message}`, true); } // an earlier load may already have changed the worker's image: show nothing rather than the wrong one
     }
   }
   async function pickImage() {

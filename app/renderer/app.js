@@ -481,8 +481,10 @@ async function ensureAiModel() {
 async function runAi() {
   const it = curItem();
   if (!it || !state.base) return setStatus('Open an image first.', true);
+  if (state.base.item !== it) return setStatus(`${it.name} is not loaded yet, so it cannot be cut out.`, true); // the picture on screen is still the previous image
   try {
     if (!(await ensureAiModel())) return;
+    if (curItem() !== it || state.base?.item !== it) return; // moved to another image while the model was being set up
     setStatus('Running RMBG-2.0…');
     const matte = await computeMatte(state.base.bitmap);
     if (curItem() !== it) return; // moved to another image meanwhile
@@ -1281,6 +1283,12 @@ function mkItem(f, names) {
 
 async function setItems(items, skipped = 0) {
   flushEdits(); // the outgoing items' pending edits
+  for (const it of items) { // ...and only then do the new items take theirs (opening awaited file checks and the frame: an edit made meanwhile is in the store now)
+    if (!it.path) continue;
+    const saved = state.editsStore[editKey(it.path)];
+    it.override = saved ? structuredClone(saved.override) : {};
+    it.dims = saved?.w ? { w: saved.w, h: saved.h } : null;
+  }
   state.gen++;
   state.items = items;
   state.skipped = skipped;
@@ -1437,8 +1445,8 @@ function setStatus(text, warn = false) {
  * What a save uses, taken when it starts: the shared settings, output size, format and quality, and the frame. A save waits (an AI matte, assets), so a
  * setting changed meanwhile must not change it (a .webp name with PNG bytes, another frame half way through Save all).
  */
-function exportSnapshot() {
-  return { shared: structuredClone(state.shared), size: state.out.size, ext: fmtExt(), quality: encodeQuality(), frame: state.frame };
+function exportSnapshot(items = []) {
+  return { shared: structuredClone(state.shared), size: state.out.size, ext: fmtExt(), quality: encodeQuality(), frame: state.frame, overrides: new Map(items.map((i) => [i, structuredClone(i.override)])) };
 }
 /** Runs a save while keeping the frames it may use alive (loadFrame does not close a frame bitmap while a save is running). */
 async function saving(fn) {
@@ -1451,7 +1459,7 @@ async function saving(fn) {
 async function renderItemBlob(it, snap = exportSnapshot()) {
   const bmp = await itemBitmap(it);
   try {
-    const cfg = { ...snap.shared, ...it.override };
+    const cfg = { ...snap.shared, ...(snap.overrides?.get(it) || it.override) };
     await ensureAssets(cfg);
     await ensureMatte(it, bmp);
     const canvas = compositeFor(cfg, buildSources(cfg, bmp, null, it.matte), snap.size, {}, snap.frame);
@@ -1482,7 +1490,7 @@ async function saveCurrent(asNew) {
     out = await api.pickSave(it.outPath, fmtExt());
     if (!out) return;
   } else if (it.exists && !state.out.overwrite && !confirm(`${it.base} Token.${fmtExt()} already exists. Overwrite it?`)) return;
-  const snap = exportSnapshot();
+  const snap = exportSnapshot([it]);
   try {
     setStatus(`Saving ${baseOf(out)}…`);
     await saving(() => writeItem(it, out, snap));
@@ -1498,7 +1506,7 @@ async function frameAll() {
   if (!needFrame()) return;
   const todo = state.items.filter((i) => i.selected && (!i.exists || state.out.overwrite));
   if (!todo.length) { setStatus('Nothing selected.', true); return; }
-  const snap = exportSnapshot(), outs = new Map(todo.map((i) => [i, i.outPath])); // the whole batch with the settings and file names of the moment it started
+  const snap = exportSnapshot(todo), outs = new Map(todo.map((i) => [i, i.outPath])); // the whole batch with the settings and file names of the moment it started
   await saving(async () => {
   const prog = $('#prog');
   prog.hidden = false;
@@ -1545,7 +1553,7 @@ async function zipAll() {
   const files = [];
   const used = new Set();
   let fail = 0;
-  const snap = exportSnapshot();
+  const snap = exportSnapshot(todo);
   await saving(async () => {
   for (let n = 0; n < todo.length; n++) {
     const it = todo[n];
