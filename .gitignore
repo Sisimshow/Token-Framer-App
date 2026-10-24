@@ -7,3 +7,6 @@ Thumbs.db
 
 # converted models (large, licence unchecked); regenerate with app/tools/convert-model.py
 app/models/*.onnx
+
+# release build output (tools/make-portable.mjs)
+dist/
