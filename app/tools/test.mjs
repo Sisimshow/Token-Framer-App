@@ -1011,6 +1011,14 @@ async function main() {
         await app.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: vr.x + dx, y: vr.y + dy, button: 'middle', buttons: 0, clickCount: 1 });
         await app.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vr.x, y: vr.y, buttons: 0 });
       };
+      // no flash of empty edges: after a zoom-out notch (and a pan) the new window is already rendered by the next animation frame, i.e. before anything is painted
+      const flash = await app.ev(`(async () => { const v = document.querySelector('#view'), r = v.getBoundingClientRect(), o = [];
+        const fits = () => { const f = __tf.prevFor, z = __tf.view; return !!f && f.x === z.x && f.y === z.y && f.z === z.z; };
+        for (const dy of [-100, -100, -100, 100, -100]) {
+          v.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true }));
+          o.push(await new Promise((res) => requestAnimationFrame(() => res({ k: __tf.penK(), fits: fits() }))));
+        }
+        return o; })()`);
       const got = [];
       for (const notches of [3, 4, 5]) {
         for (let i = 0; i < notches; i++) { await app.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: vr.x, y: vr.y, deltaX: 0, deltaY: -100 }); await sleep(150); }
@@ -1021,6 +1029,8 @@ async function main() {
       }
       await app.ev(`(async () => { document.querySelector('#view').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); __tf.setTool('brush'); __tf.shared.brushSize = 40; await __tf.loadFrame(${J(prevFrame)}); return 1; })()`);
       const ks = [...new Set(got.map((m) => m.k))];
+      check('Exact pen view: zooming in or out renders the new window before the next frame is painted (no flash of empty edges)', flash.every((f) => f.fits) && flash.some((f) => f.k > 0), J(flash));
+      await app.ev(`(() => { document.querySelector('#view').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return 1; })()`); await sleep(400);
       check('Exact pen view: with the pen in hand every source pixel is an identical k x k block of screen pixels, at three zoom steps and several pan offsets', got.every((m) => m.k >= 1 && J(m.rows) === J([m.k]) && J(m.cols) === J([m.k])) && ks.length === 3, J(got));
     }
 

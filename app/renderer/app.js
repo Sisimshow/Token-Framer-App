@@ -670,7 +670,12 @@ function applyView() {
   const b = $('#zoomBadge');
   b.hidden = v.z === 1;
   b.textContent = `${v.z.toFixed(1)}×`;
-  if (state.base && state.frame && !bufferFits()) schedulePreview(0); // zoomed far enough for a sharper render, for real pixels, or the exact pen view moved
+  if (state.base && state.frame && !bufferFits()) {
+    // The exact pen view holds only the visible window: shown zoomed out or panned, the old window leaves its edges empty (a flash of checkerboard). So it is
+    // re-rendered right here, before the browser paints (with the assets cached the render only awaits microtasks), not one timer later. Leaving it does the same.
+    if (penExactK() || state.prevFor?.exact) { clearTimeout(renderTimer); renderPreview(); }
+    else schedulePreview(0); // zoomed far enough for a sharper render, or for real pixels
+  }
 }
 
 /** Whether the last render still serves the current view (else applyView asks for a new one). */
