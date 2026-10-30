@@ -204,7 +204,7 @@ export function buildEditedMask(imageData, cfg, edits = [], matte = null) {
     if (e.type === 'ai') {
       // RMBG-2.0 matte (1024x1024, see matte.js); parameters come from cfg so they can be tweaked without re-running the model
       if (!matte) continue;
-      const m = matteToMask(matte, MATTE_RES, MATTE_RES, w, h, { sensitivity: cfg.aiSensitivity ?? 1, blur: cfg.aiBlur ?? 0, offset: cfg.aiOffset ?? -1 });
+      const m = matteToMask(matte, MATTE_RES, MATTE_RES, w, h, { sensitivity: cfg.aiSensitivity ?? 1, blur: cfg.aiBlur ?? 0, offset: cfg.aiOffset ?? 0 });
       const d = imageData.data;
       let r = 0, g = 0, b = 0, n = 0;
       for (let i = 0; i < m.length; i++) {

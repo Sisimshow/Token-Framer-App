@@ -24,7 +24,7 @@ export const DEFAULTS = {
   // the cutout (color removal + wand/brush/rectangle edits) only affects the pop-out layer unless this is off
   crPopOutOnly: false,
   // AI cutout (RMBG-2.0) post-processing; defaults follow the author's SwarmUI RMBG workflow (sensitivity 1, blur 0, offset -1)
-  aiSensitivity: 1, aiBlur: 0, aiOffset: -1,
+  aiSensitivity: 1, aiBlur: 0, aiOffset: 0,
   // wand / brush tool settings (the edits themselves live in each image's override as popEdits)
   wandTolerance: 30, wandContiguous: true, brushSize: 40, brushMode: 'erase'
 };
