@@ -1611,13 +1611,21 @@ async function main() {
   // persists across a restart: put two real frames back on top, then relaunch
   await app.ev(`(__tf.recentFrames = [${J(fC)}, ${J(fB)}, ${J(fA)}], 1)`);
   await app.ev(`__tf.loadFrame(${J(fB)}, { keepOrder: true })`);
-  const wantH = await app.ev(`(() => { const d = (t) => document.querySelector('#panel > details[data-title="' + t + '"]'); d('Image').open = false; d('Frame').open = true; window.resizeTo(1111, Math.min(777, screen.availHeight - 40)); return Math.min(777, screen.availHeight - 40); })()`);
+  const wantH = await app.ev(`(() => { const d = (t) => document.querySelector('#panel > details[data-title="' + t + '"]'); d('Frame').open = true; window.resizeTo(1111, Math.min(777, screen.availHeight - 40)); return Math.min(777, screen.availHeight - 40); })()`);
   await sleep(1300);
   app.close();
   await sleep(800);
   await app.launch();
-  const sect = await app.ev(`(() => { const d = (t) => document.querySelector('#panel > details[data-title="' + t + '"]').open; return { image: d('Image'), mask: d('Mask'), frame: d('Frame'), w: window.outerWidth, h: window.outerHeight }; })()`);
-  check('panel sections remember open/closed, window remembers its size', !sect.image && sect.mask && sect.frame && sect.w === 1111 && sect.h === wantH, J(sect));
+  const sect = await app.ev(`(async () => {
+    const all = () => [...document.querySelectorAll('#panel > details')].filter((d) => d.open).map((d) => d.dataset.title);
+    const o = { launch: all(), w: window.outerWidth, h: window.outerHeight };
+    document.querySelector('#panel > details[data-title="Output"] > summary').click(); await new Promise((r) => setTimeout(r, 50));
+    o.output = all();
+    document.querySelector('#panel > details[data-title="Image"] > summary').click(); await new Promise((r) => setTimeout(r, 50));
+    o.back = all(); return o;
+  })()`);
+  check('panel: only Image is open on launch (Frame was open at close), opening a section closes the other; window remembers its size',
+    J(sect.launch) === J(['Image']) && J(sect.output) === J(['Output']) && J(sect.back) === J(['Image']) && sect.w === 1111 && sect.h === wantH, J(sect));
   const again = await app.ev(`({ rec: __tf.recentFrames, open: !document.querySelector('#frames').hidden, frame: __tf.frame.name })`);
   check('recent frames and sidebar state survive a restart', J(again.rec) === J([fC, fB, fA]) && again.open && again.frame === 'Frame B ’b’', J(again));
 

@@ -46,7 +46,7 @@ const baseOf = (p) => p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) 
 let persistTimer = 0, settingsDirty = false, editsDirty = false; // dirty: a change not handed to the main process yet (written at once if the window closes)
 // Per-image settings (pop-out, cutout tuning) are never saved as shared defaults, so a new session or a new batch always starts with them at their defaults.
 const sharedForSave = () => { const o = { ...state.shared }; for (const k of PER_IMAGE_KEYS) delete o[k]; return o; };
-const settingsPayload = () => ({ shared: sharedForSave(), out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen, sections: state.ui.sections });
+const settingsPayload = () => ({ shared: sharedForSave(), out: state.out, framePath: state.frame?.path || '', lastDir: state.lastDir || '', recentFrames: state.recentFrames, framesOpen: !!state.ui.framesOpen });
 function persist() {
   clearTimeout(persistTimer);
   settingsDirty = true;
@@ -106,7 +106,7 @@ const SECTIONS = [
     { t: 'subhead', label: 'Send to tool', note: 'Opens image in the following tool' },
     { t: 'sendtools', target: 'image', label: '' }
   ] },
-  { title: 'Mask', open: true, controls: [
+  { title: 'Mask', controls: [
     { k: 'maskShape', t: 'select', label: 'Shape', opts: [['hole', 'Frame shape (auto)'], ['circle', 'Circle'], ['square', 'Square'], ['hexagon', 'Hexagon'], ['none', 'None']] },
     num('holeDilate', 'Edge grow (px)', 0, 40, 1, (c) => c.maskShape === 'hole' && !c.maskImage),
     num('maskRadius', 'Size', 0.3, 1.2, 0.01, (c) => !c.maskImage && c.maskShape !== 'hole' && c.maskShape !== 'none'),
@@ -201,16 +201,15 @@ function el(tag, cls, text) {
 }
 const srcOf = (c, cfg) => (c.scope === 'out' ? state.out : c.scope === 'ui' ? state.ui : cfg);
 
-let sectionsReady = false; // ignore the toggle events fired while the panel is first built and restored
 function buildPanel() {
   const panel = $('#panel');
   for (const sec of SECTIONS) {
     const d = el('details');
     d.open = !!sec.open;
+    d.name = 'panel'; // one section open at a time (the browser closes the others); Image is open on launch, nothing is remembered
     // collapsing the section that holds the tools switches the active tool off
     if (sec.title === 'Background removal') d.addEventListener('toggle', () => { if (!d.open && state.tool) setTool(state.tool); });
     d.dataset.title = sec.title;
-    d.addEventListener('toggle', () => { if (sectionsReady) { state.ui.sections[sec.title] = d.open; persist(); } });
     d.append(el('summary', null, sec.title));
     const body = el('div', 'sec');
     for (const c of sec.controls) {
@@ -1694,9 +1693,6 @@ async function init() {
   state.recentFrames = (Array.isArray(s.recentFrames) ? s.recentFrames : []).filter((x) => typeof x === 'string' && !sameFile(x, state.defaultFrame)).slice(0, RECENT_MAX);
   state.ui.framesOpen = !!s.framesOpen;
   applyFramesOpen();
-  state.ui.sections = s.sections && typeof s.sections === 'object' ? s.sections : {};
-  document.querySelectorAll('#panel > details').forEach((d) => { if (typeof state.ui.sections[d.dataset.title] === 'boolean') d.open = state.ui.sections[d.dataset.title]; });
-  setTimeout(() => { sectionsReady = true; }, 0); // after the toggle events from the loop above
   state.editsStore = await api.getEdits();
   syncControls();
   const def = await api.defaultFramePath();

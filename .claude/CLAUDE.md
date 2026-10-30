@@ -17,7 +17,7 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
   (`Runtime.evaluate`, `Input.dispatchMouseEvent`, `Page.captureScreenshot`). `window.__tf` exposes the app state and a few
   functions for this.
 
-- Release: `node tools/make-portable.mjs` (from `app/`) builds `dist/Token-Framer-App-<version>-win-x64.zip` (gitignored): Electron runtime renamed `Token Framer.exe`, the app unpacked in `resources/app` (no asar, so `models/` stays a real folder), only Windows x64 onnxruntime binaries, no .onnx models, no dev files. Bump `version` in `package.json` (and `package-lock.json`), build, then `gh release create v<version> <zip>`. The exe gets the icon and version info from `rcedit` (dev dependency, approved for this). Builds fail with EPERM if Defender is scanning the fresh exe; the script retries.
+- Release: `node tools/make-release.mjs` (from `app/`) builds `dist/Token-Framer-App-<version>-win-x64.zip` (gitignored) in the SAME layout as the source: `Token Framer App.bat` + README.txt at the top, the app in `app/` with only the node_modules it runs on (`electron/dist`, onnxruntime-node with Windows x64 binaries only, onnxruntime-common), the converted `.onnx` models found in `app/models`, no dev files. No exe of our own: the user dropped the renamed/rcedit'd exe (Defender warnings, not needed). Bump `version` in `package.json` (and `package-lock.json`), build, then `gh release create v<version> <zip>`. Builds can fail with EPERM while Defender scans a fresh copy; the script retries.
 - Regression harness: `node tools/test.mjs` (Node 22+, no deps) runs the app over CDP and checks golden composites,
   cutout tools, edit persistence and folder rules. `--update` rewrites `tools/fixtures/golden-*.png`; only do that on purpose.
 
@@ -118,7 +118,7 @@ The repo root holds only the launcher `.bat`, README, the VS Code workspace and 
 - Output: Format (WebP default, PNG) re-points every item's `outPath` and re-checks existence (`refreshOutPaths`). The WebP quality slider's 100% is sent
   to the encoder as 0.99 (best lossy, like Photoshop); the Lossless box sends a real 1.0, which Chromium encodes as lossless WebP. A saved 0.95 (the old
   default) is upgraded to 1 on load.
-- Window bounds live in `window.json` (main process, ignored if off-screen); panel section open/closed state is in `settings.json` (`sections`).
+- Window bounds live in `window.json` (main process, ignored if off-screen); the panel is an accordion: one section open at a time (`<details name="panel">`), Image open on launch, nothing remembered (an old `sections` key in settings.json is ignored).
 - Shortcuts: W/B/R tools, Left/Right image, Ctrl+S save, Ctrl+Z/Y undo/redo, Esc leaves a tool. The status line under the preview is always shown ("Ready" placeholder).
 - Folder mode skips files with "token" or "frame" in the name (case-insensitive substring), never overwrites an existing
   `<name> Token.<ext>` (webp by default, png optional) unless "Overwrite existing" is on, and writes next to the source.
